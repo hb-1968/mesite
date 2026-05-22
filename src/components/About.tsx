@@ -424,10 +424,10 @@ export function About() {
       <div className="container">
         <PromptHeading cmd="whoami" meta="// paged reader · ← / → to flip" />
         <h2 id="about-title" className="section-title">
-          A second-year-going-on-third CS student
+          Dialectics in creative Software and{' '}
+          <em style={{ fontStyle: 'italic', color: 'var(--sage)' }}>Dermatopathology</em>;
           <br />
-          with a fairly stubborn interest in{' '}
-          <em style={{ fontStyle: 'italic', color: 'var(--sage)' }}>dermatopathology</em>.
+          Computer Science @ Boston University.
         </h2>
 
         <AboutReader />
