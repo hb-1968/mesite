@@ -163,7 +163,10 @@ function computeSnakePath(grid: boolean[][]): Cell[] {
   return path;
 }
 
-function composeWordmark(text: string, joinerCols: number): boolean[][] {
+// exported so Monogram can read the same grid for hit-testing the
+// maze easter egg (filled cells = walkable). pure derivation -- safe
+// to call wherever
+export function composeWordmark(text: string, joinerCols: number): boolean[][] {
   const { chars, wordBreakAfter } = tokenize(text);
   if (chars.length === 0) return Array.from({ length: GRID_H }, () => []);
 

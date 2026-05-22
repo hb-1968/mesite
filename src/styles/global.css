@@ -592,6 +592,228 @@ a.skip-link:focus { left: var(--sp-4); top: var(--sp-4); }
   color: var(--fg);
 }
 
+/* maze easter egg -- stage wraps the big hb wordmark so overlays can
+   live in its coordinate space. width/height come from inline style
+   (matches the wordmark's cellSize * grid dims) */
+.monogram__stage {
+  position: relative;
+  display: block;
+  line-height: 0;
+}
+
+/* invisible click targets over h and b. cursor stays default so the
+   egg is hidden -- you have to find it by clicking around. the
+   2-col bridge gap between them is intentionally not clickable */
+.monogram__hit {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: transparent;
+  cursor: default;
+  z-index: 4;
+}
+/* h: cols 0-4 -> 5 * 14px = 70px wide, starting at left 0 */
+.monogram__hit--h { left: 0;    width: 70px; }
+/* b: cols 7-11 -> starts at col 7 -> 7 * 14 = 98px, 70px wide */
+.monogram__hit--b { left: 98px; width: 70px; }
+
+/* during active game, click targets stop swallowing clicks. lets the
+   outside-click-to-exit listener catch clicks anywhere except where
+   the player is moving */
+.monogram__stage.is-active .monogram__hit { pointer-events: none; }
+
+/* dot -- the player. tiny solid square positioned in sub-cell px
+   coords. bg-deep punches dark in darkmode (near-black) and pale in
+   lightmode -- reads as a hole in the amber stroke either way.
+   short transition so 2px steps smear slightly but don't lag behind
+   key-repeat. transform-only motion so we don't trip layout */
+.monogram__dot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  display: block;
+  background: var(--bg-deep);
+  transition: transform 30ms linear;
+  z-index: 3;
+}
+
+/* trail -- visited cells, smaller + dimmer than the dot */
+.monogram__trail {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  display: block;
+  background:
+    radial-gradient(
+      circle,
+      var(--amber) 0 14%,
+      transparent 16%
+    );
+  opacity: 0.55;
+  z-index: 1;
+}
+
+/* exit -- dashed outlined cell that pulses so the goal is findable.
+   paint-only animation (opacity) -- no layout effects */
+.monogram__exit {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  display: block;
+  box-sizing: border-box;
+  border: 2px dashed var(--amber-hi);
+  animation: monogram-exit-pulse 1.4s ease-in-out infinite;
+  z-index: 2;
+}
+@keyframes monogram-exit-pulse {
+  0%, 100% { opacity: 0.30; }
+  50%      { opacity: 1; }
+}
+
+/* tiny hint below the small wordmark while the game is active.
+   only visible mid-game -- people who never trigger never see it */
+.monogram__hint {
+  font-size: var(--fs-xs);
+  color: var(--fg-dim);
+  letter-spacing: 0.16em;
+  text-transform: lowercase;
+  opacity: 0.7;
+}
+
+/* wrapper for the swap. fade-in on mount via animation so the
+   monogram <-> hill transition feels intentional. only the incoming
+   side animates -- the outgoing side unmounts immediately */
+.monogram__group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.monogram__group--enter {
+  animation: monogram-stage-in 380ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+@keyframes monogram-stage-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* reward button -- revealed above the hb after winning maze 1.
+   reset button defaults, style it like a CLI prompt response */
+.monogram__reward {
+  font: inherit;
+  font-size: var(--fs-sm);
+  letter-spacing: 0.04em;
+  color: var(--amber);
+  background: transparent;
+  border: 1px dashed var(--fg-faint);
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: border-color 140ms linear, color 140ms linear, background 140ms linear;
+  /* fade in distinct from the surrounding group so the reveal reads */
+  animation: monogram-reward-in 520ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.monogram__reward:hover,
+.monogram__reward:focus-visible {
+  color: var(--amber-hi);
+  border-color: var(--amber);
+  background: var(--bg-elev);
+  outline: none;
+}
+@keyframes monogram-reward-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* sisyphus hill -- pixel grid, same snake-paint family as the
+   wordmark. cells are span[data-on="true"] so the existing
+   .wordmark--snake animation drives the paint */
+.monogram__hill {
+  position: relative;
+  display: grid;
+  gap: 0;
+  line-height: 0;
+}
+
+/* sisyphus sprite -- pixel-art SVG of a person pushing the ball.
+   amber-hi for contrast against the dark page bg; bg-deep drop-shadow
+   adds a subtle outline so it also stays legible over the amber hill.
+   crisp-edges keeps the circle pixelated rather than antialiased.
+   shorter transition than before -- with the new slip animation the
+   sprite moves fast and a heavy smear lagged behind */
+.monogram__sprite {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  color: var(--amber-hi);
+  shape-rendering: crispEdges;
+  image-rendering: pixelated;
+  filter:
+    drop-shadow(1px 0 0 var(--bg-deep))
+    drop-shadow(-1px 0 0 var(--bg-deep))
+    drop-shadow(0 1px 0 var(--bg-deep))
+    drop-shadow(0 -1px 0 var(--bg-deep));
+  transition: transform 30ms linear;
+  z-index: 3;
+}
+
+/* hidden audio iframe -- mounted after 45s in sisyphus. needs real
+   dimensions for some browsers to grant autoplay, so we keep a small
+   visible size but park it offscreen. pointer-events off + tabindex
+   -1 keep it out of the user's way */
+.monogram__audio {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  width: 200px;
+  height: 113px;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* wrapper around the small `hunter|bridges` wordmark so the
+   bypass-keyboard flash overlay has a positioning context. inline-
+   block so the wrapper hugs the wordmark's natural width */
+.monogram__small-wm {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
+
+/* flash overlay -- pulses on every letter keypress while the bypass
+   is hot. only covers the `hunter` half (left); width is set inline
+   to match the rendered wordmark. amber-hi at low opacity, fades
+   over ~220ms. keyed remount restarts the animation each press */
+.monogram__keyboard-flash {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  pointer-events: none;
+  background: var(--amber-hi);
+  mix-blend-mode: screen;
+  animation: monogram-keyboard-flash 220ms ease-out forwards;
+}
+@keyframes monogram-keyboard-flash {
+  0%   { opacity: 0.35; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monogram__exit { animation: none; opacity: 0.75; }
+  .monogram__dot  { transition: none; }
+  .monogram__sprite { transition: none; }
+  .monogram__group--enter,
+  .monogram__reward { animation: none; }
+  .monogram__keyboard-flash { animation: none; opacity: 0; }
+}
+
 /* snake-game cell reveal. each cell has:
      --snake-delay     when it appears (path idx * cellDelay)
      --snake-color     trail/body color
