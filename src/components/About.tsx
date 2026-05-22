@@ -106,16 +106,17 @@ const SPREADS: Spread[] = [
           )
         },
         {
-          label: './about/desktop',
+          label: './about/hardware',
           passage: (
-            <p key="desktop">
-              I switched my desktop from Windows 10 to Fedora 44 earlier
-              this year and have been enjoying it significantly more than I
-              expected -- partly because the configuration story is finally
-              on my side, and partly because ROCm has gotten stable enough
-              that running ML on an AMD GPU is no longer the open-ended
-              suffering it used to be. Given the AMD/NVIDIA price gap, that
-              matters more than it probably sounds like it should.
+            <p key="hardware">
+              Mostly a personal-preference aside, but: I switched from
+              Windows 10 to Fedora 44 earlier this year and have been
+              enjoying it more than I expected -- partly because the
+              configuration story is finally on my side, and partly
+              because ROCm has gotten stable enough that running ML on an
+              AMD GPU is no longer the open-ended suffering it used to be.
+              Given the AMD/NVIDIA price gap, that matters more than it
+              probably sounds like it should.
             </p>
           )
         }
