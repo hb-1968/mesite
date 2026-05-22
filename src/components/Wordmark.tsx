@@ -116,8 +116,9 @@ function computeSnakePath(grid: boolean[][]): Cell[] {
 
   while (path.length < total) {
     // try the last direction first -- favors straight strokes
-    const tryOrder = lastDir
-      ? [lastDir, ...DIRS.filter(d => d[0] !== lastDir![0] || d[1] !== lastDir![1])]
+    const last = lastDir;
+    const tryOrder: Cell[] = last
+      ? [last, ...DIRS.filter((d) => d[0] !== last[0] || d[1] !== last[1])]
       : DIRS;
 
     let moved = false;
