@@ -1,0 +1,268 @@
+/* scroll-scrubbed project anims. useScrollProgress sets --progress on
+   each card; children pick a sub-range with --d and --span, then
+   --local drives every prop via calc/color-mix. forward = reverse */
+
+.anim {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 480 / 280;
+  background: var(--bg-deep);
+  border: 1px solid var(--fg-faint);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.anim svg { display: block; width: 100%; height: 100%; }
+
+/* benchmark needs more vertical room */
+.anim--bench-tall { aspect-ratio: 480 / 360; }
+
+/* per-child --local progress under .anim */
+.anim * { --local: clamp(0, calc((var(--progress, 0) - var(--d, 0)) / var(--span, 1)), 1); }
+
+/* section titles inside an anim canvas */
+.anim-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  fill: var(--fg);
+  letter-spacing: 0.04em;
+}
+.anim-sub {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--fg-dim);
+  letter-spacing: 0.04em;
+}
+
+/* shared axes/labels for plot-type anims */
+.ax        { stroke: var(--fg-faint); stroke-width: 1; }
+.ax-ref    { stroke: var(--fg-faint); stroke-width: 1; stroke-dasharray: 3 3; }
+.ax-tick   { font-family: var(--font-mono); font-size: 8px; fill: var(--fg-dim); }
+.ax-label  { font-family: var(--font-mono); font-size: 9px; fill: var(--fg-muted); letter-spacing: 0.04em; }
+
+
+/* 1. PRAME / attention */
+.prame-tile {
+  fill: var(--bg-elev);
+  opacity: var(--local);
+}
+.prame-tile--att {
+  --d2: 0.55; --span2: 0.25;
+  --local2: clamp(0, calc((var(--progress, 0) - var(--d2)) / var(--span2)), 1);
+  fill: color-mix(in srgb,
+                  var(--terracotta) calc(var(--local2) * 100%),
+                  var(--bg-elev));
+}
+.prame-bloom {
+  --d: 0.5; --span: 0.35;
+  fill: var(--terracotta);
+  opacity: calc(var(--local) * 0.45);
+  filter: blur(18px);
+  transform-origin: 240px 170px;
+  transform: scale(calc(0.4 + var(--local) * 0.7));
+}
+.prame-pill rect {
+  --d: 0.85; --span: 0.15;
+  fill: var(--amber);
+  opacity: var(--local);
+}
+.prame-pill text {
+  --d: 0.88; --span: 0.12;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  fill: var(--bg-deep);
+  font-weight: 700;
+  opacity: var(--local);
+}
+
+
+/* 2. package track */
+.track-rail { stroke: var(--fg-faint); stroke-width: 3; }
+.track-fill {
+  --d: 0.1; --span: 0.7;
+  stroke: var(--amber);
+  stroke-width: 3;
+  stroke-dasharray: 200;
+  stroke-dashoffset: calc(200 - var(--local) * 200);
+}
+.track-fill--long {
+  stroke-dasharray: 400;
+  stroke-dashoffset: calc(400 - var(--local) * 400);
+}
+.track-station circle {
+  fill: color-mix(in srgb,
+                  var(--amber) calc(var(--local) * 100%),
+                  var(--bg-deep));
+  stroke: color-mix(in srgb,
+                    var(--amber) calc(var(--local) * 100%),
+                    var(--fg-faint));
+  stroke-width: 2;
+}
+.track-pkg rect { fill: var(--bg-deep); stroke: var(--amber); stroke-width: 2; }
+.track-pkg line { stroke: var(--amber); stroke-width: 1.5; }
+.track-pkg {
+  --d: 0.1; --span: 0.8;
+  transform: translate(calc(40px + var(--local) * 400px), 160px);
+}
+.track-pkg--long {
+  transform: translate(calc(40px + var(--local) * 400px), 160px);
+}
+.track-labels text {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+
+/* 3. iconograph */
+.icon-source {
+  --d: 0.1; --span: 0.35;
+  fill: var(--amber);
+  opacity: calc(0.85 * (1 - var(--local)));
+  transform-origin: 120px 160px;
+  transform: translate(calc(var(--local) * 100px), 0) scale(calc(1 - var(--local)));
+}
+.icon-cell {
+  --span: 0.25;
+  opacity: var(--local);
+  transform-origin: center;
+  transform-box: fill-box;
+  transform: scale(calc(0.3 + var(--local) * 0.7));
+}
+.icon-cell--abs  { fill: var(--amber); }
+.icon-cell--mono { fill: var(--fg); }
+
+
+/* 4. benchmark -- tall AUC bars */
+.anim-title-lg {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 500;
+  fill: var(--fg);
+  letter-spacing: 0;
+}
+.anim-sub-lg {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  fill: var(--fg-dim);
+  letter-spacing: 0.04em;
+}
+.m-uni    { stroke: var(--amber); }
+.m-resnet { stroke: var(--fg-muted); }
+.m-dino   { stroke: var(--sage); }
+
+.bench-name {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 500;
+  fill: var(--fg);
+}
+.bench-bar {
+  stroke-width: 10;
+  stroke-linecap: butt;
+  /* --len is passed in via inline style; dasharray must cover the longest
+     possible bar.  At AUC 0.95 the bar is 330 svg units, so 400 is safe. */
+  stroke-dasharray: 400;
+  stroke-dashoffset: calc(400 - var(--local) * var(--len, 200));
+}
+.bench-value {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  opacity: var(--local);
+}
+.bench-value.m-uni    { fill: var(--amber); }
+.bench-value.m-resnet { fill: var(--fg-muted); }
+.bench-value.m-dino   { fill: var(--sage); }
+.bench-ci {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--fg-dim);
+  opacity: var(--local);
+}
+.ci-line {
+  stroke: var(--fg-dim);
+  stroke-width: 1.5;
+  opacity: var(--local);
+}
+
+
+/* 5. OLS / polynomial */
+.ols-truth {
+  fill: none;
+  stroke: var(--fg-dim);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: var(--local);
+}
+.ols-pt {
+  fill: var(--fg);
+  opacity: calc(var(--local) * 0.9);
+}
+.ols-fit {
+  fill: none;
+  stroke-width: 2;
+  stroke-dasharray: 700;
+  stroke-dashoffset: calc(700 - var(--local) * 700);
+}
+.ols-fit--1 { stroke: var(--fg-muted); }
+.ols-fit--2 { stroke: var(--sage); }
+.ols-fit--3 { stroke: var(--amber); }
+.ols-fit.swatch { stroke-width: 3; stroke-dasharray: none; stroke-dashoffset: 0; }
+.legend {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.ols-legend > g { opacity: var(--local); }
+
+
+/* 6. GMM / EM convergence */
+.gmm-pt2 {
+  --span: 0.18;
+  fill: var(--fg-muted);
+  opacity: calc(var(--local) * 0.9);
+}
+.gmm-pt2--a { fill: var(--amber); }
+.gmm-pt2--b { fill: var(--sage); }
+.gmm-pt2--c { fill: var(--terracotta); }
+
+.gmm-true {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  opacity: calc(var(--local) * 0.7);
+}
+.gmm-true--a { stroke: var(--amber);     }
+.gmm-true--b { stroke: var(--sage);      }
+.gmm-true--c { stroke: var(--terracotta);}
+
+.gmm-em {
+  fill: none;
+  stroke-width: 2;
+  opacity: var(--local);
+  transform-box: fill-box;
+  transform-origin: center;
+  /* Right-to-left composition: scale → translate → identity rotation slot.
+     During wrong-init (low progress), the ellipse is offset by (ox, oy)
+     and scaled by --scale0. Both reduce to identity at progress=1. */
+  transform:
+    translate(calc((1 - var(--local)) * var(--ox, 0) * 1px),
+              calc((1 - var(--local)) * var(--oy, 0) * 1px))
+    scale(calc(1 + (1 - var(--local)) * (var(--scale0, 1) - 1)));
+}
+.gmm-em--a { stroke: var(--amber);     }
+.gmm-em--b { stroke: var(--sage);      }
+.gmm-em--c { stroke: var(--terracotta);}
+
+.gmm-iter {
+  fill: var(--amber);
+  font-variant-numeric: tabular-nums;
+}
+.gmm-readout text { font-family: var(--font-mono); }
+
+
+/* reduced motion: useScrollProgress pins progress = 1 already */

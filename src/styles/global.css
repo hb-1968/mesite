@@ -1,0 +1,651 @@
+*, *::before, *::after { box-sizing: border-box; }
+
+/* min-height (not height) -- hard height: 100% caps sticky to one
+   viewport and the bar scrolls away. min-height lets them grow */
+html, body, #root { min-height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* theme cross-fade. custom props don't transition on their own -- when
+   data-theme flips, every var() snaps. solution: when useTheme adds
+   .theme-transitioning to <html> for 450ms, every element gets a
+   one-shot transition on the resolved values. snappy again after */
+.theme-transitioning,
+.theme-transitioning *,
+.theme-transitioning *::before,
+.theme-transitioning *::after {
+  transition-property:
+    background-color, background-image, color, border-color,
+    fill, stroke, box-shadow, text-shadow, opacity !important;
+  transition-duration: 450ms !important;
+  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .theme-transitioning,
+  .theme-transitioning *,
+  .theme-transitioning *::before,
+  .theme-transitioning *::after {
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* native scrollbar HIDDEN -- <Scrollbar/> draws its own so the look is
+   consistent across Chrome/Safari/Firefox/Edge. wheel/keys/touch all
+   still work normally. 20px right gutter so the custom bar has room */
+
+html { scrollbar-width: none; }                  /* Firefox */
+::-webkit-scrollbar { width: 0; height: 0; }      /* WebKit / Blink */
+html { -ms-overflow-style: none; }               /* old Edge / IE */
+
+@media (min-width: 701px) {
+  body { padding-right: 20px; }
+}
+
+/* scanline grain -- one layer, low opacity, theme-aware via --scanline */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent 0,
+    transparent 3px,
+    var(--scanline) 3px,
+    var(--scanline) 4px
+  );
+  z-index: 1;
+}
+
+a {
+  color: var(--amber);
+  text-decoration: none;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 120ms linear, color 120ms linear;
+}
+a:hover, a:focus-visible {
+  color: var(--amber-hi);
+  border-bottom-color: var(--amber-hi);
+  outline: none;
+}
+
+::selection {
+  background: var(--amber);
+  color: var(--bg-deep);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--fg-faint);
+  padding: var(--sp-2) var(--sp-4);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: border-color 120ms linear, color 120ms linear, background 120ms linear;
+}
+button:hover, button:focus-visible {
+  border-color: var(--amber);
+  color: var(--amber);
+  outline: none;
+}
+
+hr {
+  border: none;
+  height: var(--dash-thickness);
+  margin: var(--sp-6) 0;
+  background-image: linear-gradient(
+    to right,
+    var(--fg-faint) 0 var(--dash-len),
+    transparent var(--dash-len) var(--dash-stride)
+  );
+  background-size: var(--dash-stride) 100%;
+  background-repeat: repeat-x;
+}
+
+h1, h2, h3, h4 {
+  margin: 0;
+  font-weight: 500;
+  line-height: var(--lh-tight);
+}
+
+p { margin: 0 0 var(--sp-4) 0; }
+
+/* layout primitives */
+.container {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 0 var(--sp-5);
+}
+
+.section {
+  padding: var(--sp-9) 0;
+  position: relative;
+  z-index: 2;
+  /* CLI dashed divider on the top edge */
+  background-image: linear-gradient(
+    to right,
+    var(--fg-faint) 0 var(--dash-len),
+    transparent var(--dash-len) var(--dash-stride)
+  );
+  background-size: var(--dash-stride) var(--dash-thickness);
+  background-repeat: repeat-x;
+  background-position: 0 0;
+}
+
+.section:first-of-type { background-image: none; }
+
+/* prompt-style header: $ cat projects/*.md   // 06 entries */
+.prompt-heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-6);
+  color: var(--fg-muted);
+  font-size: var(--fs-sm);
+}
+.prompt-heading .glyph { color: var(--amber); }
+.prompt-heading .cmd { color: var(--fg); font-weight: 500; }
+.prompt-heading__cmd {
+  /* nudge down 2px so the pixel baseline (row 8) lines up with the
+     surrounding text baseline. wordmark grid is taller than the text */
+  align-self: end;
+  transform: translateY(2px);
+}
+.prompt-heading .meta {
+  color: var(--fg-dim);
+  margin-left: auto;
+  font-size: var(--fs-xs);
+}
+
+.section-title {
+  font-size: var(--fs-2xl);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--fg);
+  margin: 0 0 var(--sp-5) 0;
+}
+
+.lede {
+  font-size: var(--fs-lg);
+  color: var(--fg-muted);
+  max-width: 65ch;
+  line-height: var(--lh-snug);
+}
+
+/* cards */
+.card {
+  border: var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--sp-5);
+  background: var(--bg-panel);
+  transition: border-color 140ms linear, background 140ms linear, transform 140ms linear;
+}
+.card:hover {
+  border-color: var(--amber);
+  background: var(--bg-elev);
+}
+
+/* monospace-web style boxes. inset title rides the top border like a
+   <fieldset> legend. sharp corners, ASCII corner chars in the title.
+   usage:
+     <div className="boxed" data-title="./about/me.json"> ... </div>
+     <div className="boxed boxed--double" data-title="..."> ... </div> */
+.boxed {
+  position: relative;
+  /* 4px borders, same weight class as the dashed section rules */
+  border: 4px solid var(--fg-muted);
+  border-radius: 0;
+  padding: var(--sp-5);
+  background: var(--bg-panel);
+}
+.boxed[data-title] { margin-top: 0.75em; }
+.boxed[data-title]::before {
+  content: '─ ' attr(data-title) ' ─';
+  position: absolute;
+  top: -0.65em;
+  left: var(--sp-3);
+  padding: 0 var(--sp-2);
+  background: var(--bg-base);
+  color: var(--amber);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.boxed[data-foot]::after {
+  content: '└ ' attr(data-foot) ' ┘';
+  position: absolute;
+  bottom: -0.65em;
+  right: var(--sp-3);
+  padding: 0 var(--sp-2);
+  background: var(--bg-base);
+  color: var(--fg-dim);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+}
+/* match the cutout bg on darker containers via data-on-deep */
+.boxed[data-on-deep][data-title]::before,
+.boxed[data-on-deep][data-foot]::after { background: var(--bg-deep); }
+
+.boxed--double {
+  /* double line: outer 4px (from .boxed), 2px gap, inner 4px. ~10px total */
+  box-shadow:
+    0 0 0 2px var(--bg-base) inset,
+    0 0 0 6px var(--fg-faint) inset;
+  padding: var(--sp-6);
+}
+.boxed--amber  { border-color: var(--amber); }
+.boxed--amber[data-title]::before { color: var(--amber-hi); }
+
+/* project cards -- subtle hover lift, no solid card bg */
+.boxed--project {
+  background: var(--bg-panel);
+  transition: border-color 160ms linear, background 160ms linear;
+}
+.boxed--project:hover {
+  border-color: var(--amber);
+  background: var(--bg-elev);
+}
+.boxed--project:hover[data-title]::before { color: var(--amber-hi); }
+
+/* projects page entries */
+.boxed--entry { padding: var(--sp-6); }
+
+.entry-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: var(--sp-4);
+  align-items: baseline;
+}
+.entry-num {
+  color: var(--fg-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.entry-name {
+  font-size: var(--fs-2xl);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: var(--lh-tight);
+}
+.entry-when {
+  color: var(--fg-dim);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.entry-role {
+  color: var(--fg-dim);
+  font-size: var(--fs-xs);
+  margin-top: var(--sp-1);
+  margin-left: calc(2.6ch + var(--sp-4));
+}
+
+.status-badge {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid currentColor;
+}
+.status-badge--done { color: var(--olive); }
+.status-badge--wip  { color: var(--terracotta); }
+
+.entry-body {
+  margin-top: var(--sp-5);
+  margin-left: calc(2.6ch + var(--sp-4));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 1.05fr);
+  gap: var(--sp-6);
+  align-items: start;
+}
+.entry-viz {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+.entry-highlight {
+  border-left: 1px solid var(--fg-faint);
+  padding-left: var(--sp-4);
+  color: var(--fg-muted);
+}
+.entry-highlight__label {
+  font-size: var(--fs-xs);
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.entry-highlight__value {
+  font-size: var(--fs-3xl);
+  color: var(--amber);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* learned-heuristics block -- used instead of the headline number when
+   no single metric captures the work (coursework, pet projects) */
+.entry-heuristics {
+  border-left: 1px solid var(--fg-faint);
+  padding-left: var(--sp-4);
+  color: var(--fg-muted);
+}
+.entry-heuristics__label {
+  font-size: var(--fs-xs);
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: var(--sp-3);
+}
+.entry-heuristics__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-snug);
+}
+.entry-heuristics__list li {
+  position: relative;
+  padding-left: 1.6ch;
+  margin-bottom: var(--sp-3);
+}
+.entry-heuristics__list li:last-child { margin-bottom: 0; }
+.entry-heuristics__list li::before {
+  content: '›';
+  position: absolute;
+  left: 0;
+  color: var(--amber);
+}
+
+/* lock-in flash -- fired by useScrollProgress when a scrambler hits
+   stable. paint-only props (color, text-shadow) -- DO NOT animate
+   anything that changes layout, or IO toggles .in in a feedback loop */
+@keyframes scramble-lockin {
+  0% {
+    color: var(--amber-hi);
+    text-shadow:
+      0 0 14px var(--amber),
+      0 0 8px  var(--amber),
+      0 0 2px  var(--amber-hi);
+  }
+  25% {
+    color: var(--amber);
+    text-shadow:
+      0 0 8px var(--amber),
+      0 0 3px var(--amber);
+  }
+  100% {
+    color: var(--fg-muted);
+    text-shadow: none;
+  }
+}
+.entry-heuristics__list li.locked {
+  animation: scramble-lockin 620ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .entry-heuristics__list li.locked { animation: none; }
+}
+@media (max-width: 880px) {
+  .entry-body {
+    grid-template-columns: 1fr;
+    margin-left: 0;
+  }
+  .entry-role { margin-left: 0; }
+  .entry-head { grid-template-columns: auto 1fr auto; }
+  .entry-head .entry-when { display: none; }
+}
+
+/* tree-style nested list */
+.tree {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  color: var(--fg-muted);
+}
+.tree li { padding: 2px 0; }
+.tree li::before {
+  content: '├── ';
+  color: var(--fg-dim);
+}
+.tree li:last-child::before { content: '└── '; }
+.tree .tree { margin-left: 1.5ch; }
+.tree .tree li::before { content: '├── '; }
+.tree .tree li:last-child::before { content: '└── '; }
+
+/* chip */
+.chip {
+  display: inline-block;
+  padding: 2px 8px;
+  margin: 0 6px 6px 0;
+  font-size: var(--fs-xs);
+  color: var(--fg-muted);
+  background: var(--bg-base);
+  border: 1px solid var(--fg-faint);
+  border-radius: var(--radius-sm);
+}
+.chip.accent { color: var(--sage); border-color: rgba(111,168,160,0.4); }
+.chip.warm   { color: var(--amber); border-color: rgba(217,167,92,0.4); }
+.chip.alert  { color: var(--terracotta); border-color: rgba(201,125,93,0.4); }
+
+/* skill dot meter (same as the resume) */
+.dots {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: var(--sp-3);
+  vertical-align: middle;
+}
+.dot {
+  width: 8px; height: 8px;
+  border: 1px solid var(--fg-muted);
+  border-radius: 50%;
+}
+.dot.filled { background: var(--fg); border-color: var(--fg); }
+
+/* reveal on scroll -- panel-rise */
+.reveal {
+  opacity: 0;
+  transform: translateY(32px);
+  transition:
+    opacity 520ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 620ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: opacity, transform;
+}
+.reveal.in {
+  opacity: 1;
+  transform: none;
+}
+
+/* .reveal.stagger cascades its children */
+.reveal.stagger > * {
+  opacity: 0;
+  transform: translateY(24px);
+  transition:
+    opacity 520ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 620ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: opacity, transform;
+}
+.reveal.stagger.in > * {
+  opacity: 1;
+  transform: none;
+}
+.reveal.stagger.in > *:nth-child(1) { transition-delay:  40ms; }
+.reveal.stagger.in > *:nth-child(2) { transition-delay: 120ms; }
+.reveal.stagger.in > *:nth-child(3) { transition-delay: 200ms; }
+.reveal.stagger.in > *:nth-child(4) { transition-delay: 280ms; }
+.reveal.stagger.in > *:nth-child(5) { transition-delay: 360ms; }
+.reveal.stagger.in > *:nth-child(6) { transition-delay: 440ms; }
+
+/* section-header wipe -- amber dashed rule draws 0 -> 100% on .reveal.in.
+   base is muted dashed; ::after is the same pattern in amber, scaled */
+.wipe-rule {
+  position: relative;
+  height: var(--dash-thickness);
+  margin: var(--sp-2) 0 var(--sp-5);
+  background-image: linear-gradient(
+    to right,
+    var(--fg-faint) 0 var(--dash-len),
+    transparent var(--dash-len) var(--dash-stride)
+  );
+  background-size: var(--dash-stride) 100%;
+  background-repeat: repeat-x;
+  overflow: hidden;
+}
+.wipe-rule::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    to right,
+    var(--amber) 0 var(--dash-len),
+    transparent var(--dash-len) var(--dash-stride)
+  );
+  background-size: var(--dash-stride) 100%;
+  background-repeat: repeat-x;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 900ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.reveal.in .wipe-rule::after {
+  transform: scaleX(1);
+}
+
+/* card hover lift */
+.card.reveal { transition-property: opacity, transform, border-color, background; }
+
+/* anim only plays when scope has .in (set by useReveal) */
+[data-anim] { --t: 0; }
+.in [data-anim] { --t: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; transition: none; }
+  .wipe-rule::after { transform: scaleX(1); transition: none; }
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+/* blinking cursor */
+.cursor {
+  display: inline-block;
+  width: 0.55ch;
+  height: 1em;
+  background: var(--amber);
+  vertical-align: -2px;
+  margin-left: 2px;
+  animation: blink 1.1s steps(1) infinite;
+}
+@keyframes blink {
+  50% { background: transparent; }
+}
+
+/* a11y */
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+a.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--amber);
+  color: var(--bg-deep);
+  z-index: 10;
+}
+a.skip-link:focus { left: var(--sp-4); top: var(--sp-4); }
+
+/* monogram -- pixel hb + wordmark stack */
+.monogram {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+}
+.monogram svg {
+  display: block;
+  /* crisp edges, no browser interpolation */
+  image-rendering: pixelated;
+  shape-rendering: crispEdges;
+}
+.monogram__name {
+  font-family: 'Silkscreen', var(--font-mono);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  color: var(--fg);
+}
+
+/* snake-game cell reveal. each cell has:
+     --snake-delay     when it appears (path idx * cellDelay)
+     --snake-color     trail/body color
+     --snake-duration  2x cellDelay -- head visibility = one stride so
+                       only one cell is "head" at a time
+   keyframe (step-end):
+     0%   transparent (waiting)
+     1%   amber-hi (head, until 50%)
+     50%  body color (snake moved on, this is now trail)
+   forwards keeps it as trail */
+.wordmark--snake span[data-on="true"] {
+  background: transparent;
+  animation: snake-paint var(--snake-duration, 56ms) step-end forwards;
+  animation-delay: var(--snake-delay, 0ms);
+}
+@keyframes snake-paint {
+  0%        { background: transparent; }
+  1%, 49%   { background: var(--amber-hi); }
+  50%, 100% { background: var(--snake-color); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wordmark--snake span[data-on="true"] {
+    background: var(--snake-color);
+    animation: none;
+  }
+}
+
+/* code/terminal output block */
+.output {
+  font-size: var(--fs-sm);
+  color: var(--fg-muted);
+  background: var(--bg-deep);
+  border: var(--rule);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-3) var(--sp-4);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.output .key { color: var(--sage); }
+.output .num { color: var(--amber); }
+.output .str { color: var(--olive); }
+
+/* responsive grid helpers */
+.grid {
+  display: grid;
+  gap: var(--sp-5);
+}
+.grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+
+@media (max-width: 880px) {
+  .grid.cols-3, .grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 560px) {
+  .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
+  .section { padding: var(--sp-7) 0; }
+}
