@@ -33,9 +33,8 @@ function joinerWidthFor(
 
 // strip '|' and ' ' markers, record where word breaks land. space and
 // '|' act the same -- no glyph, default joiner, no bridge. keeps cmds
-// like
- *  "ls projects/" or "history --since 2024" tight: the space reads
- *  as kerning between words, not as a 5-col empty BLANK. */
+// like "ls projects/" or "history --since 2024" tight (space = kerning
+// between words, not a 5-col BLANK).
 function tokenize(text: string): { chars: string[]; wordBreakAfter: Set<number> } {
   const chars: string[] = [];
   const wordBreakAfter = new Set<number>();
