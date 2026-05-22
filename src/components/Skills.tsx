@@ -21,7 +21,7 @@ export function Skills() {
   return (
     <section id="skills" className="section reveal" aria-labelledby="skills-title">
       <div className="container">
-        <PromptHeading cmd="man skills" meta="// last updated 2026-05" />
+        <PromptHeading cmd="theyskills" meta="// last updated 2026-05" />
         <h2 id="skills-title" className="section-title">Tools & tech</h2>
 
         <div className="grid cols-2" style={{ marginTop: 'var(--sp-6)', rowGap: 'var(--sp-7)' }}>
