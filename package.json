@@ -1,9 +1,20 @@
 {
   "name": "hunter-portfolio",
-  "private": true,
   "version": "0.1.0",
-  "type": "module",
+  "private": true,
   "description": "Hunter Bridges — personal site. Terminal-themed, scroll-based.",
+  "homepage": "https://github.com/hb-1968/mesite#readme",
+  "bugs": {
+    "url": "https://github.com/hb-1968/mesite/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hb-1968/mesite.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

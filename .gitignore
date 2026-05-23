@@ -21,3 +21,11 @@ dist-ssr
 *.tsbuildinfo
 vite.config.d.ts
 vite.config.js
+
+# Claude -- agent config + project memory, not part of the site build
+.claude/
+.claude.json
+# Markdown -- project notes, agent prompts, planning docs all live as
+# .md files locally but aren't part of the site itself. covers
+# CLAUDE.md, PROJECT.md, and anything else that accumulates
+*.md

@@ -10,6 +10,8 @@ import { History } from './components/History';
 import { Contact } from './components/Contact';
 import { Footer } from './components/Footer';
 import { ProjectsPage } from './components/ProjectsPage';
+import { HolePage } from './components/HolePage';
+import { Hole2Page } from './components/Hole2Page';
 import { NavTransition } from './components/NavTransition';
 import { Scrollbar } from './components/Scrollbar';
 import { useReveal } from './hooks/useReveal';
@@ -42,7 +44,7 @@ export default function App() {
       <a href="#main" className="skip-link">Skip to content</a>
       <Scrollbar />
       <StatusBar theme={theme} onToggleTheme={toggle} page={route.page} />
-      {route.page === 'main' ? (
+      {route.page === 'main' && (
         <>
           <Boot />
           <main id="main">
@@ -55,9 +57,10 @@ export default function App() {
             <Contact />
           </main>
         </>
-      ) : (
-        <ProjectsPage />
       )}
+      {route.page === 'projects' && <ProjectsPage />}
+      {route.page === 'hole' && <HolePage />}
+      {route.page === 'hole2' && <Hole2Page />}
       <Footer />
     </NavTransition>
   );

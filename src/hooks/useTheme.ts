@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 
 export type Theme = 'dark' | 'light';
 const STORAGE_KEY = 'hb-theme';
-const TRANSITION_MS = 450;
 
 // dark/light theme, persisted to localStorage. resolves from storage,
-// then prefers-color-scheme, then dark. toggle adds .theme-transitioning
-// to <html> for the cross-fade window, then removes it.
+// then prefers-color-scheme, then dark. toggle uses the View Transitions
+// API when available -- one GPU-composited crossfade, no per-element
+// style recalc. falls back to a hard snap on browsers without it (mostly
+// firefox as of mid-2026); the per-element transition machinery we used
+// to run was the source of the click-feels-laggy window.
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window === 'undefined') return 'dark';
@@ -22,16 +25,24 @@ export function useTheme() {
     window.localStorage.setItem(STORAGE_KEY, theme);
   }, [theme]);
 
-  const timer = useRef<number | null>(null);
   const toggle = useCallback(() => {
-    const root = document.documentElement;
-    root.classList.add('theme-transitioning');
-    if (timer.current) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
-      root.classList.remove('theme-transitioning');
-      timer.current = null;
-    }, TRANSITION_MS);
-    setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
+    // pull the flip out so we can pass it as a callback. flushSync forces
+    // react to commit synchronously inside the view-transition callback --
+    // without it the snapshot/swap timing is off and you get a flash
+    const apply = () => {
+      flushSync(() => {
+        setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
+      });
+    };
+
+    // startViewTransition lives on Document in lib.dom (TS 5.6+) so no
+    // cast needed. older browsers (firefox as of mid-2026) just won't
+    // have it -- fall through to the hard snap.
+    if (typeof document.startViewTransition === 'function') {
+      document.startViewTransition(apply);
+      return;
+    }
+    apply();
   }, []);
 
   return { theme, setTheme, toggle };

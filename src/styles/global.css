@@ -16,26 +16,20 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* theme cross-fade. custom props don't transition on their own -- when
-   data-theme flips, every var() snaps. solution: when useTheme adds
-   .theme-transitioning to <html> for 450ms, every element gets a
-   one-shot transition on the resolved values. snappy again after */
-.theme-transitioning,
-.theme-transitioning *,
-.theme-transitioning *::before,
-.theme-transitioning *::after {
-  transition-property:
-    background-color, background-image, color, border-color,
-    fill, stroke, box-shadow, text-shadow, opacity !important;
-  transition-duration: 450ms !important;
-  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1) !important;
+/* theme crossfade. uses the View Transitions API -- browser snapshots
+   the page, swaps data-theme instantly, then crossfades the two snapshots
+   on the GPU. way cheaper than the old universal-selector approach where
+   every element had to register its own transition entry */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 320ms;
+  animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+  mix-blend-mode: normal;
 }
 @media (prefers-reduced-motion: reduce) {
-  .theme-transitioning,
-  .theme-transitioning *,
-  .theme-transitioning *::before,
-  .theme-transitioning *::after {
-    transition-duration: 0.001ms !important;
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0.001ms;
   }
 }
 
@@ -761,6 +755,1043 @@ a.skip-link:focus { left: var(--sp-4); top: var(--sp-4); }
   z-index: 3;
 }
 
+/* sisyphus victory choice -- two buttons that reveal 3s after the
+   win, anchored above the sprite at the hill's top-right (where the
+   person stands at the summit). dashed-border family matches the
+   [continue?] reward button */
+.monogram__choice {
+  position: absolute;
+  /* sprite at t=1 extends ~22px above hill top; bottom of choice
+     sits another 8px above that */
+  bottom: calc(100% + 30px);
+  /* sprite extends ~6px past the hill's right edge -- nudge the
+     buttons out by the same so they line up over the person */
+  right: -6px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  z-index: 4;
+  pointer-events: auto;
+  animation: monogram-choice-in 420ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.monogram__choice-btn {
+  font: inherit;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.04em;
+  color: var(--amber);
+  background: var(--bg-base);
+  border: 1px dashed var(--fg-faint);
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 140ms linear, color 140ms linear, background 140ms linear;
+}
+.monogram__choice-btn:hover,
+.monogram__choice-btn:focus-visible {
+  color: var(--amber-hi);
+  border-color: var(--amber);
+  background: var(--bg-elev);
+  outline: none;
+}
+@keyframes monogram-choice-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* hole page -- the cinematic frame. summit scene plays inside a
+   letterboxed pixel-art window. status bar above strips down to just
+   END YOURSELF on this route. dialogue bar pinned to the frame's lower
+   edge -- empty for now, content lands in later storyboard passes */
+
+/* stage wraps the frame, pads it, and pours a black ground around so
+   the cinematic feel reads even on wide screens */
+.hole-stage {
+  position: relative;
+  width: 100%;
+  min-height: calc(100vh - 68px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-5);
+  background: #000;
+}
+
+/* the frame itself -- fixed 16:9, ages-old amber rim, no overflow */
+.hole-frame {
+  position: relative;
+  width: min(95vw, 1100px);
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border: 2px solid var(--fg-faint);
+  box-shadow:
+    0 0 0 2px #000,
+    0 0 0 3px var(--fg-faint),
+    0 24px 60px -20px rgba(0, 0, 0, 0.8);
+  overflow: hidden;
+}
+
+/* sisyphus sprite SVG sits on top of the photo plate. positioned
+   absolute so it shares the frame's coordinate system with the photo
+   and overlays. pointer-events off -- the dialogue bar can still take
+   clicks later */
+.hole-scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+/* fallback sky -- mimics the photo's tonal layout in case the image
+   doesn't load. lives below the photo layer */
+.hole-frame__sky {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      to bottom,
+      #0e0612 0%,
+      #1a0c1c 28%,
+      #3a141a 55%,
+      #7a2c20 78%,
+      #c25028 92%,
+      #ea8540 100%
+    );
+}
+
+/* the photo plate -- runs the heavy SVG filter (turbulence-displace +
+   posterize + warm color matrix) and stacks a few CSS filters on top
+   to push it further from "photo". scaled up so the displacement edge
+   doesn't show as a hard rectangle */
+.hole-frame__photo {
+  position: absolute;
+  inset: -6%;
+  width: 112%;
+  height: 112%;
+  object-fit: cover;
+  filter:
+    url(#hole-frost)
+    blur(0.6px)
+    saturate(1.15)
+    contrast(1.08)
+    brightness(0.88);
+  opacity: 0.92;
+  /* hint the GPU; keeps the heavy SVG filter from re-rasterizing each
+     frame when the sun overlay animates over it */
+  will-change: filter;
+}
+
+/* frost overlay -- semi-opaque white-haze with a fine SVG noise grain
+   inlined as a data URI. sells the look of looking through frosted
+   glass: light wash + texture, not just a blur */
+.hole-frame__frost {
+  position: absolute;
+  inset: 0;
+  background-color: rgba(232, 220, 196, 0.10);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 0.93  0 0 0 0 0.78  0 0 0 0.22 0'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>");
+  background-size: 220px 220px;
+  mix-blend-mode: screen;
+  opacity: 0.55;
+}
+
+/* amber multiply tint -- locks the photo into the site palette. without
+   this the source colors fight the rest of the site. tuned subtle
+   enough that the underlying composition still reads */
+.hole-frame__tint {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse at 52% 38%,
+      rgba(255, 178, 96, 0.28) 0%,
+      rgba(120, 48, 32, 0.18) 45%,
+      rgba(20, 8, 14, 0.62) 95%
+    );
+  mix-blend-mode: multiply;
+}
+
+/* sisyphus entrance + idle. three stacked groups in the SVG (walkin /
+   bob / breathe) so each animation owns its own transform without
+   stepping on the others. timing chain:
+     0      -> 4500ms : walk-in slides from off-frame left, bob runs 7
+                        step cycles
+     4500ms -> forever : breathing takes over, walk-in + bob are parked
+
+   all values transform-only, no layout-affecting props -- safe under
+   the IO-feedback rule */
+
+/* outer slide -- decelerating ease-out so the figure settles, not
+   crashes, into place. starts ~50% off the scene's left edge */
+.hole-sisy-walkin {
+  animation: hole-sisy-walkin 4500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes hole-sisy-walkin {
+  0%   { transform: translateX(-180px); opacity: 0; }
+  6%   { opacity: 1; }
+  100% { transform: translateX(0);      opacity: 1; }
+}
+
+/* step bob -- finite count, ends parked at y=0. only runs during the
+   walk-in, so the rhythm of stepping doesn't fight the slow breathing */
+.hole-sisy-bob {
+  animation: hole-sisy-bob 600ms ease-in-out 7 forwards;
+}
+@keyframes hole-sisy-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-1px); }
+}
+
+/* breathing -- delayed until walk-in lands. ±2 scene units, slow, so
+   it reads as labored. backwards fill holds y=0 during the delay */
+.hole-sisy {
+  animation: hole-sisy-breathe 4200ms ease-in-out 4500ms infinite both;
+}
+@keyframes hole-sisy-breathe {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2px); }
+}
+
+/* dialogue bar -- pinned to bottom of frame, classic VN proportions.
+   empty for now (no inner text). dashed rule along the top echoes the
+   site's section dividers so it still feels like the same world */
+.hole-dialogue {
+  position: absolute;
+  left: 4%;
+  right: 4%;
+  bottom: 4%;
+  height: 22%;
+  background: rgba(8, 6, 10, 0.78);
+  border: 1px solid var(--amber);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.6), 0 0 0 3px var(--amber-hi);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+.hole-dialogue__inner {
+  height: 100%;
+  padding: var(--sp-4) var(--sp-5);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  line-height: var(--lh-snug);
+  display: flex;
+  align-items: center;
+}
+
+/* dot stream -- four nested layers:
+   .viewport : clips the overflowing row
+   .fill     : one-time slide-in from the right, plays after sisyphus
+               lands. lifts the row from "entirely off the right edge"
+               to "flush with the left", which reads as the bar filling
+               left-to-right at a steady rate
+   .scroll   : infinite loop that runs after .fill parks. seamless
+               because the row is 200% wide and the keyframe shifts by
+               exactly -50% (= one container-width) per cycle, landing
+               on the same visual phase as the start
+   .row      : the dot characters themselves. white-space: pre keeps
+               the spaces between dots so the cadence stays even */
+.hole-dialogue__viewport {
+  position: relative;
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+.hole-dialogue__fill {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  /* delay = sisyphus walk-in duration (4500ms). forwards holds the
+     end state so .scroll picks up from translateX(0) */
+  animation: hole-dots-fill 4000ms linear 4500ms forwards;
+  transform: translateX(100%);
+}
+.hole-dialogue__scroll {
+  width: 200%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  /* starts the moment .fill ends (4500 + 4000 = 8500ms). same per-cell
+     rate as the fill, so the user can't see the seam where one hands
+     off to the other */
+  animation: hole-dots-scroll 4000ms linear 8500ms infinite;
+}
+.hole-dialogue__row {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  color: var(--fg-muted);
+  letter-spacing: 0.18em;
+  white-space: pre;
+  user-select: none;
+}
+@keyframes hole-dots-fill {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes hole-dots-scroll {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+/* click-to-fracture -- pauses both dot layers wherever they are. dots
+   stay visible, just stop moving. applies to the dialogue stream only,
+   not breathing / walk-in / etc */
+.hole-frame[data-stage] .hole-dialogue__fill,
+.hole-frame[data-stage] .hole-dialogue__scroll {
+  animation-play-state: paused;
+}
+
+/* fracture cracks -- six jagged polylines emerging from center.
+   pathLength=1 normalizes lengths so each crack draws at the same rate
+   regardless of total polyline length. crispEdges + integer points
+   gives the stairstep "pixelated" character */
+.hole-cracks {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0;
+}
+.hole-crack {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  /* a faint amber drop-shadow on the line so it pops against both the
+     dark mountain band and the bright sky band. drawn via filter so
+     crispEdges still wins on the line itself */
+  filter: drop-shadow(0 0 1.5px rgba(255, 200, 120, 0.55));
+}
+.hole-frame[data-stage] .hole-cracks {
+  opacity: 1;
+}
+.hole-frame[data-stage] .hole-crack {
+  animation: hole-crack-draw 420ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+.hole-frame[data-stage] .hole-crack:nth-child(1) { animation-delay:   0ms; }
+.hole-frame[data-stage] .hole-crack:nth-child(2) { animation-delay:  70ms; }
+.hole-frame[data-stage] .hole-crack:nth-child(3) { animation-delay: 140ms; }
+.hole-frame[data-stage] .hole-crack:nth-child(4) { animation-delay: 210ms; }
+.hole-frame[data-stage] .hole-crack:nth-child(5) { animation-delay: 280ms; }
+.hole-frame[data-stage] .hole-crack:nth-child(6) { animation-delay: 350ms; }
+@keyframes hole-crack-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+/* extension cracks -- only drawn on YES exit. cascade lines up with
+   the primary cracks because both groups have the same nth-child
+   order. duration matches the original draw so the extensions feel
+   like a continuation, not a new stroke */
+.hole-crack-extend {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  filter: drop-shadow(0 0 1.5px rgba(255, 200, 120, 0.55));
+}
+
+/* glass shards -- bright pixel rects that fly out from the crack
+   endpoints. each shard's trajectory is fed in via custom properties
+   (set inline on the element). the keyframe consumes them so a single
+   animation definition covers all 30+ shards
+*/
+.hole-shard,
+.hole-shard-extend {
+  opacity: 0;
+  transform-origin: center;
+  transform-box: fill-box;
+  filter: drop-shadow(0 0 1px rgba(255, 220, 160, 0.7));
+}
+.hole-frame[data-stage] .hole-shard {
+  animation: hole-shard-fly 900ms cubic-bezier(0.16, 1, 0.3, 1) var(--shard-delay, 0ms) forwards;
+}
+.hole-frame[data-stage="exit-yes"] .hole-shard-extend {
+  animation: hole-shard-fly 1000ms cubic-bezier(0.16, 1, 0.3, 1) var(--shard-delay, 0ms) forwards;
+}
+@keyframes hole-shard-fly {
+  0%   { opacity: 0; transform: translate(0, 0) rotate(0); }
+  6%   { opacity: 1; transform: translate(0, 0) rotate(0); }
+  100% {
+    opacity: 0;
+    transform:
+      translate(var(--shard-tx, 0), var(--shard-ty, 0))
+      rotate(var(--shard-rot, 0deg));
+  }
+}
+.hole-frame[data-stage="exit-yes"] .hole-crack-extend {
+  animation: hole-crack-draw 320ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+}
+.hole-frame[data-stage="exit-yes"] .hole-crack-extend:nth-child(1) { animation-delay:   0ms; }
+.hole-frame[data-stage="exit-yes"] .hole-crack-extend:nth-child(2) { animation-delay:  40ms; }
+.hole-frame[data-stage="exit-yes"] .hole-crack-extend:nth-child(3) { animation-delay:  80ms; }
+.hole-frame[data-stage="exit-yes"] .hole-crack-extend:nth-child(4) { animation-delay: 120ms; }
+.hole-frame[data-stage="exit-yes"] .hole-crack-extend:nth-child(5) { animation-delay: 160ms; }
+.hole-frame[data-stage="exit-yes"] .hole-crack-extend:nth-child(6) { animation-delay: 200ms; }
+
+/* warning modal fades out the moment the user picks. clears the
+   visual field for the cracks-extend / black-fade sequences */
+.hole-frame[data-stage="exit-yes"] .hole-warning,
+.hole-frame[data-stage="exit-no"] .hole-warning {
+  animation: hole-warning-out 200ms linear forwards;
+  pointer-events: none;
+}
+@keyframes hole-warning-out {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -50%) scale(0.94); }
+}
+
+/* a quick frame shake when the cracks land -- two jolts over 240ms,
+   transform-only so no layout cost */
+.hole-frame[data-stage] .hole-scene,
+.hole-frame[data-stage] .hole-dialogue {
+  animation: hole-fracture-shake 240ms steps(1, end) 1;
+}
+@keyframes hole-fracture-shake {
+  0%   { transform: translate(0, 0); }
+  20%  { transform: translate(-2px, 1px); }
+  40%  { transform: translate(2px, -1px); }
+  60%  { transform: translate(-1px, 2px); }
+  80%  { transform: translate(1px, -2px); }
+  100% { transform: translate(0, 0); }
+}
+
+/* warning modal -- lands once cracks are most of the way drawn.
+   centered with translate -50%/-50%, no layout flow. fades + scales in.
+   pointer-events come on with the animation so the buttons are only
+   active once visible. red on black -- system-warning loud, not site-
+   palette warm */
+.hole-warning {
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: min(60%, 460px);
+  padding: var(--sp-5) var(--sp-5);
+  background: #000;
+  border: 4px solid #FF2A2A;
+  box-shadow: 0 0 24px rgba(255, 42, 42, 0.4);
+  color: #FF2A2A;
+  font-family: var(--font-mono);
+  text-align: center;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.86);
+  pointer-events: none;
+  z-index: 4;
+}
+.hole-frame[data-stage] .hole-warning {
+  animation: hole-warning-in 280ms cubic-bezier(0.22, 0.9, 0.32, 1.15) 480ms forwards;
+  pointer-events: auto;
+}
+@keyframes hole-warning-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.86); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+/* title is a flex row -- bangs hug the text on both sides, balanced.
+   the bangs are their own icon-style spans so they can size and flash
+   independently of the warning text */
+.hole-warning__title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  margin: 0 0 var(--sp-5) 0;
+  color: #FF2A2A;
+}
+.hole-warning__text {
+  font-size: var(--fs-md);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.hole-warning__bang {
+  font-size: var(--fs-xl);
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  /* hard on/off flash via steps(2) -- no easing, no halfway frame.
+     reads as a warning beacon rather than a wobble */
+  animation: hole-warning-bang-flash 720ms steps(2, end) infinite;
+  text-shadow: 0 0 8px rgba(255, 42, 42, 0.55);
+}
+@keyframes hole-warning-bang-flash {
+  0%, 49.9% { opacity: 1; }
+  50%, 100% { opacity: 0.18; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole-warning__bang { animation: none; }
+}
+.hole-warning__buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+}
+.hole-warning__sep {
+  color: #FF2A2A;
+  font-weight: 700;
+  user-select: none;
+}
+.hole-warning__btn {
+  font-family: var(--font-mono);
+  font-size: var(--fs-md);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #FF2A2A;
+  background: #000;
+  border: 3px solid #FF2A2A;
+  padding: var(--sp-2) var(--sp-5);
+  cursor: pointer;
+  transition:
+    color 140ms linear,
+    border-color 140ms linear,
+    background 140ms linear;
+}
+.hole-warning__btn:hover,
+.hole-warning__btn:focus-visible {
+  color: #FF5555;
+  border-color: #FF5555;
+  background: rgba(255, 42, 42, 0.18);
+  outline: none;
+}
+
+/* exit overlays -- mounted on <html> so they survive HolePage unmounting
+   during the route swap. these are the only way to bleed the
+   transition past the hole-frame's borders into the full viewport */
+html.hole-exit-black-in::before,
+html.hole-exit-black-out::before,
+html.hole-exit-white-in::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  pointer-events: none;
+}
+html.hole-exit-black-in::before {
+  background: #000;
+  animation: hole-exit-black-fade 620ms linear forwards;
+}
+html.hole-exit-black-out::before {
+  background: #000;
+  animation: hole-exit-black-clear 460ms linear forwards;
+}
+html.hole-exit-white-in::before {
+  background: #fff;
+  animation: hole-exit-white-flash 220ms linear forwards;
+}
+@keyframes hole-exit-black-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes hole-exit-black-clear {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes hole-exit-white-flash {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* hole2 -- the white void. fixed-position overlay sized to the
+   viewport so it lays over the (already-hidden) status bar and footer.
+   beat 1: a gothic dialogue box slides up from below */
+.hole2-stage {
+  position: fixed;
+  inset: 0;
+  background: #fff;
+  z-index: 1000;
+  overflow: hidden;
+}
+
+/* END YOURSELF -- top-center bail option, appears once the user has
+   clicked past "What has you?". plain black-on-white, wide letter-
+   spacing matches the hole's status-bar treatment so it reads as a
+   continuation of that thread. hovers red to suggest the threat */
+.hole2-end {
+  position: absolute;
+  top: 5%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: transparent;
+  border: none;
+  padding: 0.4em 1em;
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.36em;
+  text-transform: uppercase;
+  color: #000;
+  cursor: pointer;
+  z-index: 12;
+  animation: hole2-end-in 700ms cubic-bezier(0.2, 0.85, 0.3, 1.05) forwards;
+  /* pad the right edge to balance the wide tracking visually */
+  padding-left: 1.36em;
+  border-bottom: 1px dashed transparent;
+  transition:
+    color 180ms linear,
+    border-color 180ms linear,
+    text-shadow 220ms ease,
+    letter-spacing 220ms ease;
+}
+.hole2-end:hover,
+.hole2-end:focus-visible {
+  color: #FF2A2A;
+  border-bottom-color: #FF2A2A;
+  text-shadow: 0 0 8px rgba(255, 42, 42, 0.45);
+  letter-spacing: 0.42em;
+  outline: none;
+}
+@keyframes hole2-end-in {
+  0%   { opacity: 0; transform: translate(-50%, -10px); }
+  100% { opacity: 1; transform: translate(-50%, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hole2-end {
+    animation: none;
+    transform: translateX(-50%);
+    opacity: 1;
+  }
+}
+
+/* the pile -- absolute-positioned anchor at bottom-center. each box
+   inside positions itself relative to this anchor. clicking anywhere
+   on hole2-stage advances activeIdx; each box's data-status follows */
+.hole2-pile {
+  position: absolute;
+  left: 50%;
+  bottom: 11%;
+  width: 0;
+  height: 0;
+}
+
+/* dialogue wrapper -- one per box. three statuses gate three animation
+   stages: pending (off-screen, hidden), active (slide-in + float), and
+   shattered (squash + debris). the inner __float owns the idle hover
+   so the two transforms compose on different elements */
+.hole2-dialogue {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: min(720px, 88vw);
+  margin-left: calc(min(720px, 88vw) / -2);
+  pointer-events: none;
+}
+/* pending -- parked off-screen at the assigned from-direction, fully
+   transparent. no animation; waits for status to flip to active */
+.hole2-dialogue[data-status="pending"] {
+  transform: translate(var(--enter-from-x, 0), var(--enter-from-y, 200%));
+  opacity: 0;
+}
+.hole2-dialogue[data-status="active"] {
+  animation: hole2-dialogue-slide 520ms cubic-bezier(0.20, 1.05, 0.32, 1.04) forwards;
+  pointer-events: auto;
+}
+/* shattered -- starts from the rest position (forwards fill from
+   slide), runs a squash + opacity drop, never comes back. debris
+   particles animate alongside via the .hole2-debris rule below */
+.hole2-dialogue[data-status="shattered"] {
+  animation: hole2-dialogue-shatter 520ms cubic-bezier(0.45, 0.05, 0.55, 1) forwards;
+}
+.hole2-dialogue__svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* per-direction from-positions. 220% takes the box well past the
+   viewport edge so the entry feels like it comes from off-screen */
+.hole2-dialogue[data-dir="N"]  { --enter-from-x:    0%; --enter-from-y: -260%; }
+.hole2-dialogue[data-dir="NE"] { --enter-from-x:  220%; --enter-from-y: -260%; }
+.hole2-dialogue[data-dir="E"]  { --enter-from-x:  220%; --enter-from-y:    0%; }
+.hole2-dialogue[data-dir="SE"] { --enter-from-x:  220%; --enter-from-y:  260%; }
+.hole2-dialogue[data-dir="S"]  { --enter-from-x:    0%; --enter-from-y:  260%; }
+.hole2-dialogue[data-dir="SW"] { --enter-from-x: -220%; --enter-from-y:  260%; }
+.hole2-dialogue[data-dir="W"]  { --enter-from-x: -220%; --enter-from-y:    0%; }
+.hole2-dialogue[data-dir="NW"] { --enter-from-x: -220%; --enter-from-y: -260%; }
+
+/* aggressive slide -- snap from per-direction from-position to per-box
+   final offset + rotation. 85% overshoots slightly past final so the
+   box "punches" into place */
+@keyframes hole2-dialogue-slide {
+  0% {
+    transform: translate(var(--enter-from-x), var(--enter-from-y));
+    opacity: 0;
+  }
+  18% { opacity: 1; }
+  85% {
+    transform:
+      translate(
+        calc(var(--final-x, 0px) - 4px),
+        calc(var(--final-y, 0px) - 6px)
+      )
+      rotate(calc(var(--final-rot, 0deg) - 1deg));
+  }
+  100% {
+    transform:
+      translate(var(--final-x, 0px), var(--final-y, 0px))
+      rotate(var(--final-rot, 0deg));
+    opacity: 1;
+  }
+}
+
+/* shatter (outer wrapper) -- the box is being crushed. it stays at
+   its rest position but rapidly squashes vertically + drops opacity
+   so it appears flattened into the page. the inner svg gets its own
+   crush animation that handles the visual squash on the artwork */
+@keyframes hole2-dialogue-shatter {
+  0% {
+    transform: translate(var(--final-x, 0px), var(--final-y, 0px)) rotate(var(--final-rot, 0deg)) scaleY(1);
+    opacity: 1;
+  }
+  60% {
+    transform: translate(var(--final-x, 0px), calc(var(--final-y, 0px) + 6px)) rotate(var(--final-rot, 0deg)) scaleY(0.3);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--final-x, 0px), calc(var(--final-y, 0px) + 10px)) rotate(var(--final-rot, 0deg)) scaleY(0.05);
+    opacity: 0;
+  }
+}
+
+/* idle float -- noticeably bigger amplitude: 10px Y bob, ±3px lateral
+   sway, ±1.5deg rotation. per-box float-phase (negative delay) puts
+   each box at a different point in the cycle */
+.hole2-dialogue__float {
+  transform-origin: 50% 100%;
+  will-change: transform;
+}
+.hole2-dialogue[data-status="active"] .hole2-dialogue__float {
+  animation: hole2-dialogue-float 5200ms ease-in-out infinite;
+  animation-delay: calc(520ms + var(--float-phase, 0ms));
+}
+@keyframes hole2-dialogue-float {
+  0%   { transform: translate(0, 0)        rotate(-1deg); }
+  25%  { transform: translate(-3px, -5px)  rotate(0.4deg); }
+  50%  { transform: translate(0, -10px)    rotate(1.5deg); }
+  75%  { transform: translate(3px, -5px)   rotate(0.4deg); }
+  100% { transform: translate(0, 0)        rotate(-1deg); }
+}
+
+/* dialogue body -- HTML overlay on top of the SVG box. positioned to
+   sit inside the SVG's body area (the un-ornamented interior). text,
+   speaker name, caret, and the input form all render here */
+.hole2-dialogue__float {
+  position: relative;
+}
+.hole2-dialogue__body {
+  position: absolute;
+  /* body area in svg coords is x:[8, 312] y:[8, 102] of 320x110.
+     percentages: 2.5%, 95%, 7.3%, 92.7% */
+  left: 4%;
+  right: 4%;
+  top: 11%;
+  bottom: 11%;
+  padding: 0;
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  line-height: 1.35;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+  user-select: none;
+}
+.hole2-dialogue__speaker {
+  color: #cfcfcf;
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  margin-bottom: 0.4em;
+  user-select: none;
+}
+
+/* center alignment -- Maestrul's naming box uses this so the line
+   reads as a formal pronouncement rather than left-flush prose */
+.hole2-dialogue__body[data-align="center"] {
+  align-items: center;
+  text-align: center;
+}
+
+/* huge mode -- "What has you?" stretches across the box at a big size,
+   centering both axes. font-size clamped so it scales for narrow
+   viewports. caret shrinks to a matching ratio so it doesn't dwarf
+   the text */
+.hole2-dialogue__body[data-huge] {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.hole2-dialogue__body[data-huge] .hole2-dialogue__text {
+  font-size: clamp(1.6rem, 5vw, 3.4rem);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  line-height: 1.05;
+}
+.hole2-dialogue__body[data-huge] .hole2-dialogue__caret {
+  font-size: 0.5em;
+}
+
+/* strike svg -- spans the full box. holds both the pixel-art letters
+   and the per-letter crack polylines so they share one viewBox and the
+   cracks visibly start at the letter pixels they emerge from */
+.hole2-strike {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* letters -- each glyph is its own <g>. opacity-only entrance keyed
+   off a per-letter css var so the timing syncs with the crack that
+   shares that delay. inherent pixel-stairstep edges come from the
+   underlying 1x rects scaled 4x */
+.hole2-strike__letter {
+  opacity: 0;
+}
+.hole2-dialogue[data-status="active"] .hole2-strike__letter {
+  animation: hole2-strike-letter-in 320ms cubic-bezier(0.18, 0.9, 0.32, 1) var(--letter-delay, 720ms) both;
+}
+@keyframes hole2-strike-letter-in {
+  0%   { opacity: 0; }
+  35%  { opacity: 1; }
+  100% { opacity: 1; }
+}
+
+/* crack cells -- one 4x4 rect per cell, same pixel resolution as the
+   letters. each cell has a per-cell delay so cracks read as growing
+   outward cell-by-cell from the letter they originate from */
+.hole2-strike__crack-cell {
+  opacity: 0;
+}
+.hole2-dialogue[data-status="active"] .hole2-strike__crack-cell {
+  animation: hole2-strike-cell-in 90ms linear var(--cell-delay, 720ms) both;
+}
+@keyframes hole2-strike-cell-in {
+  0%   { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole2-dialogue[data-status="active"] .hole2-strike__letter,
+  .hole2-dialogue[data-status="active"] .hole2-strike__crack-cell {
+    animation: none;
+    opacity: 1;
+  }
+}
+.hole2-dialogue__text {
+  color: #fff;
+  font-weight: 400;
+  white-space: normal;
+  word-wrap: break-word;
+}
+.hole2-dialogue__caret {
+  display: inline-block;
+  margin-left: 0.5em;
+  font-size: 0.7em;
+  color: var(--amber-hi, #cfb48a);
+  animation: hole2-caret-blink 720ms steps(2, end) infinite;
+}
+@keyframes hole2-caret-blink {
+  0%, 49.9% { opacity: 1; }
+  50%, 100% { opacity: 0.15; }
+}
+/* red dialogue -- system-warning red, matches the warning modal */
+.hole2-text--red {
+  color: #FF2A2A;
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(255, 42, 42, 0.45);
+}
+/* gothic + red -- the Maestrul Umbrelor name treatment. unifraktur
+   blackletter at a bigger size, the same warning red */
+.hole2-text--gothic-red {
+  font-family: 'UnifrakturMaguntia', 'Times New Roman', serif;
+  font-size: 1.5em;
+  font-weight: 400;
+  color: #FF2A2A;
+  text-shadow: 0 0 6px rgba(255, 42, 42, 0.5);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* input form -- the 6th box. user types their reply, submit writes to
+   localStorage + downloads a .txt. stopPropagation on every clickable
+   bit so the page-level click handler doesn't try to advance */
+.hole2-input {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45em;
+  pointer-events: auto;
+}
+.hole2-input__field {
+  width: 100%;
+  background: #1a1a1a;
+  color: #fff;
+  border: 1px solid #fff;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  line-height: 1.35;
+  padding: 0.45em 0.6em;
+  resize: none;
+  outline: none;
+  caret-color: #fff;
+}
+.hole2-input__field:focus {
+  border-color: #FF2A2A;
+  box-shadow: 0 0 0 1px #FF2A2A;
+}
+.hole2-input__submit {
+  align-self: flex-start;
+  background: #000;
+  color: #fff;
+  border: 2px solid #fff;
+  padding: 0.3em 1em;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 140ms linear, border-color 140ms linear, background 140ms linear;
+}
+.hole2-input__submit:hover:not(:disabled),
+.hole2-input__submit:focus-visible:not(:disabled) {
+  color: #FF2A2A;
+  border-color: #FF2A2A;
+  outline: none;
+}
+.hole2-input__submit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.hole2-input__done {
+  color: var(--amber-hi, #cfb48a);
+  font-size: 0.9rem;
+  letter-spacing: 0.06em;
+}
+
+/* shatter debris -- absolute particles inside each box. invisible
+   until status="shattered", then each particle flies outward from
+   its grid position with rotation + gravity sag + opacity drop */
+.hole2-shatter {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.hole2-debris {
+  position: absolute;
+  background: #fff;
+  border: 1px solid #000;
+  box-sizing: border-box;
+  opacity: 0;
+  /* the particle's left/top come from inline style (grid+jitter); the
+     transform target comes from per-particle css vars */
+  transform-origin: center;
+}
+.hole2-dialogue[data-status="shattered"] .hole2-debris {
+  animation: hole2-debris-fly 760ms cubic-bezier(0.22, 0.7, 0.36, 1) var(--debris-delay, 0ms) forwards;
+}
+@keyframes hole2-debris-fly {
+  0%   {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0);
+  }
+  20%  { opacity: 1; }
+  100% {
+    opacity: 0;
+    transform: translate(var(--debris-dx, 0), var(--debris-dy, 0)) rotate(var(--debris-rot, 0));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole2-dialogue[data-status="active"] {
+    animation: none;
+    transform: translate(var(--final-x, 0px), var(--final-y, 0px)) rotate(var(--final-rot, 0deg));
+    opacity: 1;
+  }
+  .hole2-dialogue[data-status="active"] .hole2-dialogue__float {
+    animation: none;
+    transform: none;
+  }
+  .hole2-dialogue[data-status="shattered"] {
+    animation: none;
+    opacity: 0;
+  }
+  .hole2-dialogue[data-status="shattered"] .hole2-debris {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* reduced motion -- skip the typewriter, show a full row of dots
+   immediately. no animation, no scroll. cracks + warning still appear
+   on click but without the cascade timing -- they just snap in */
+@media (prefers-reduced-motion: reduce) {
+  .hole-dialogue__fill,
+  .hole-dialogue__scroll,
+  .hole-frame[data-stage] .hole-scene,
+  .hole-frame[data-stage] .hole-dialogue {
+    animation: none;
+    transform: none;
+  }
+  .hole-frame[data-stage] .hole-crack {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .hole-frame[data-stage] .hole-shard,
+  .hole-frame[data-stage="exit-yes"] .hole-shard-extend {
+    animation: none;
+    opacity: 0;
+  }
+  .hole-frame[data-stage] .hole-warning {
+    animation: none;
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+    pointer-events: auto;
+  }
+}
+
+/* respect reduced motion -- everything settles to a static frame.
+   walkin needs the "to" state held, so we drop the animation but the
+   element stays at translateX(0) since that's the base */
+@media (prefers-reduced-motion: reduce) {
+  .hole-sisy-walkin,
+  .hole-sisy-bob,
+  .hole-sisy {
+    animation: none;
+  }
+  .hole-sisy-walkin { opacity: 1; }
+}
+
+/* status bar variant -- only END YOURSELF + the theme toggle. centered
+   prompt, wide letter-spacing so it reads like a final-screen choice */
+.hole-end-link {
+  font-family: var(--font-mono);
+  color: var(--amber);
+  font-weight: 500;
+  font-size: var(--fs-md);
+  text-transform: uppercase;
+  letter-spacing: 0.32em;
+  padding-left: 0.32em; /* pad so the spaced caps still look centered */
+  border-bottom: 1px dashed transparent;
+  justify-self: center;
+  transition:
+    color 160ms linear,
+    border-color 160ms linear,
+    letter-spacing 220ms ease,
+    text-shadow 220ms ease;
+}
+.hole-end-link:hover,
+.hole-end-link:focus-visible {
+  color: var(--amber-hi);
+  border-bottom-color: var(--amber-hi);
+  letter-spacing: 0.38em;
+  text-shadow: 0 0 6px color-mix(in srgb, var(--amber-hi) 60%, transparent);
+  outline: none;
+}
+
 /* hidden audio iframe -- mounted after 45s in sisyphus. needs real
    dimensions for some browsers to grant autoplay, so we keep a small
    visible size but park it offscreen. pointer-events off + tabindex
@@ -810,7 +1841,8 @@ a.skip-link:focus { left: var(--sp-4); top: var(--sp-4); }
   .monogram__dot  { transition: none; }
   .monogram__sprite { transition: none; }
   .monogram__group--enter,
-  .monogram__reward { animation: none; }
+  .monogram__reward,
+  .monogram__choice { animation: none; }
   .monogram__keyboard-flash { animation: none; opacity: 0; }
 }
 
@@ -872,3 +1904,3046 @@ a.skip-link:focus { left: var(--sp-4); top: var(--sp-4); }
   .grid.cols-2, .grid.cols-3, .grid.cols-4 { grid-template-columns: 1fr; }
   .section { padding: var(--sp-7) 0; }
 }
+
+/* ============================================================
+   hole2 transition + arena
+   ============================================================ */
+
+/* the dialogue pile fades out the moment phase leaves dialogue. the
+   transition overlay takes the foreground from here on */
+.hole2-stage[data-phase="rising"] .hole2-pile,
+.hole2-stage[data-phase="eclipsing"] .hole2-pile,
+.hole2-stage[data-phase="arena"] .hole2-pile {
+  opacity: 0;
+  transition: opacity 280ms linear;
+  pointer-events: none;
+}
+
+/* transition layer -- positioned fixed to the viewport. holds the
+   shadow / sprite / eclipse / arena child elements all at once;
+   their visibility + animations are gated by phase data-attr on the
+   parent stage */
+.hole2-transition {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* shadow -- small square at the bottom-center where Box 6 was floating.
+   shows up the moment phase flips to rising, persists into eclipsing
+   where it serves as the eclipse's anchor */
+.hole2-shadow {
+  position: absolute;
+  left: 50%;
+  bottom: 11%;
+  width: 38px;
+  height: 38px;
+  background: #0a0608;
+  transform: translateX(-50%);
+  opacity: 0;
+  animation: hole2-shadow-in 280ms ease-out forwards;
+}
+.hole2-stage[data-phase="eclipsing"] .hole2-shadow,
+.hole2-stage[data-phase="arena"] .hole2-shadow {
+  /* once eclipse begins, the shadow vanishes inside the expanding
+     circle. no animation needed -- the eclipse covers it */
+  opacity: 0;
+  transition: opacity 200ms linear;
+}
+@keyframes hole2-shadow-in {
+  from { opacity: 0; transform: translate(-50%, 24px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* hidden yt iframe host -- the embed plays the bg music track. needs
+   to remain laid out (not display:none or width:0) for audio playback
+   to work in chrome/safari, so we park it offscreen with opacity 0 */
+/* off-screen host -- applies to both the div used by the dialogue
+   iframe-api player and the plain iframe used for the boss track */
+.hole2-music-host {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  width: 200px;
+  height: 120px;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+}
+.hole2-music-host iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* sprite -- the cleaned thebrothersforsplyce sprite at its native
+   48x84 px. starts at the shadow position, rises over RISE_MS to the
+   upper region of the viewport, then settles into the arena box.
+   trail child renders the vertical motion-blur after-image. this is
+   the BOSS sprite; the player is a separate figure being prototyped
+   in /testbed before it ports back here */
+.hole2-sprite {
+  position: absolute;
+  left: 50%;
+  bottom: 11vh;
+  /* vh sizing -- matches the engine's .boss container (6vh x 10vh)
+     with the sprite img inside taking 5.71vh x 10vh under object-fit:
+     contain (sprite native aspect = 48:84 = 0.571). previously 48x84px,
+     which drifted across viewports and landed visibly smaller than the
+     engine boss at typical 1080p (~9.5vh vs 10vh) */
+  width: 5.71vh;
+  height: 10vh;
+  transform: translate(-50%, 0);
+  opacity: 0;
+}
+.hole2-sprite__body {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+.hole2-sprite__trail {
+  position: absolute;
+  /* center the trail under the sprite -- narrower than the body so it
+     reads as exhaust rather than a square block. vh sizing to match
+     the parent .hole2-sprite (now also vh) so the trail's width stays
+     proportional across viewports */
+  left: 50%;
+  margin-left: -0.9vh;
+  top: 100%;
+  width: 1.8vh;
+  /* dark gradient -- visible against the white viewport during the
+     rise. once the eclipse swallows everything, the trail's already
+     fading via hole2-trail-fade so we don't worry about black-on-black */
+  background: linear-gradient(to bottom, rgba(40, 30, 30, 0.8), rgba(40, 30, 30, 0));
+  filter: blur(3px);
+  opacity: 0;
+  height: 0;
+}
+/* sprite animation chain -- ONE rule applied across all post-dialogue
+   phases. avoids restarting the animation when the phase data-attr
+   changes (which would happen if rule values differed per phase). rise
+   runs first (0-1500ms), then a long pause at the top, then settle
+   drops the sprite into the arena box at 2300ms (= when the eclipse
+   covers, so the sprite arrives inside before any background appears).
+   z-index: 10 keeps it above the arena ground + box */
+.hole2-stage[data-phase="rising"] .hole2-sprite,
+.hole2-stage[data-phase="eclipsing"] .hole2-sprite,
+.hole2-stage[data-phase="arena"] .hole2-sprite {
+  animation: hole2-sprite-rise 1500ms cubic-bezier(0.2, 0.65, 0.35, 1) forwards,
+             hole2-sprite-settle 600ms ease 2300ms forwards,
+             hole2-sprite-bob 2400ms ease-in-out 2900ms infinite;
+  z-index: 10;
+}
+.hole2-stage[data-phase="rising"] .hole2-sprite__trail,
+.hole2-stage[data-phase="eclipsing"] .hole2-sprite__trail,
+.hole2-stage[data-phase="arena"] .hole2-sprite__trail {
+  animation: hole2-sprite-trail 1500ms cubic-bezier(0.2, 0.65, 0.35, 1) forwards,
+             hole2-trail-fade 600ms linear 1500ms forwards;
+}
+@keyframes hole2-sprite-rise {
+  /* element base sits at bottom:11vh + height:10vh, so the element
+     top starts at 79vh. rise lifts the sprite to ~8vh (near viewport
+     top, vanishing-point look). scale grows 1 -> 1.18 across the climb
+     so the figure reads as approaching rather than retreating */
+  0%   { transform: translate(-50%, 0)     scale(1);    opacity: 0; }
+  10%  { transform: translate(-50%, -1vh)  scale(0.96); opacity: 1; }
+  100% { transform: translate(-50%, -71vh) scale(1.18); opacity: 1; }
+}
+@keyframes hole2-sprite-trail {
+  /* trail extends from sprite bottom downward, tracking the climb.
+     final height = (79vh element-top - 8vh rise-end) - the trail
+     itself = ~71vh */
+  0%   { height: 0;    opacity: 0; }
+  20%  { height: 4vh;  opacity: 0.85; }
+  100% { height: 71vh; opacity: 0.65; }
+}
+@keyframes hole2-trail-fade {
+  from { opacity: 0.65; }
+  to   { opacity: 0; }
+}
+@keyframes hole2-sprite-settle {
+  /* settle drops the sprite from the rise endpoint down to the engine
+     boss's exact resting position. engine .boss sits at top:17vh
+     (calc(var(--box-top) + 5vh)) with height:10vh -- element base at
+     bottom:11vh + height:10vh means the element top is at 79vh, so
+     translateY(-62vh) lands the element top at 17vh. scale 1 matches
+     the engine boss container 1:1, so BEGIN doesn't visibly resize
+     the figure */
+  from { transform: translate(-50%, -71vh) scale(1.18); }
+  to   { transform: translate(-50%, -62vh) scale(1); }
+}
+@keyframes hole2-sprite-bob {
+  /* idle hover at the settled position -- ±0.4vh, barely perceptible
+     (held breath, not pendulum). transforms match settle's final
+     state exactly so handoff at 2900ms is seamless */
+  0%, 100% { transform: translate(-50%, -62vh)         scale(1); }
+  50%      { transform: translate(-50%, calc(-62vh - 0.4vh)) scale(1); }
+}
+
+/* eclipse -- black circle anchored at the shadow position. clip-path
+   would be cleaner but a scaled circle gives broader browser support.
+   grows from radius 0 to viewport-covering size */
+.hole2-eclipse {
+  position: absolute;
+  left: 50%;
+  bottom: 11%;
+  width: 38px;
+  height: 38px;
+  background: #000;
+  border-radius: 50%;
+  transform: translate(-50%, 50%) scale(0);
+  transform-origin: center;
+}
+.hole2-stage[data-phase="eclipsing"] .hole2-eclipse,
+.hole2-stage[data-phase="arena"] .hole2-eclipse {
+  animation: hole2-eclipse-expand 1100ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes hole2-eclipse-expand {
+  /* scales 0 -> ~100 (sqrt(viewport^2 + viewport^2) / 38 worst-case).
+     using 90 is safe up to ~3400px viewports */
+  from { transform: translate(-50%, 50%) scale(0); }
+  to   { transform: translate(-50%, 50%) scale(90); }
+}
+
+/* arena -- the black field is provided by the still-expanded eclipse,
+   so the arena container itself just holds the staged children. each
+   child fades in on its own delay so the user sees: blackening ->
+   1s pause -> ground -> 1s pause -> box. sprite is on top via z-index */
+.hole2-arena {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  /* scope the multiply-blend darken layer to the arena's stacking
+     context so its blending doesn't bleed onto the eclipse below */
+  isolation: isolate;
+}
+
+/* registered custom properties so the mask radii + stop animate via
+   keyframes. without @property they'd be treated as strings and not
+   interpolate. supported in chrome 85+, safari 16.4+, firefox 128+ */
+@property --ground-mask-r {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: 10%;
+}
+@property --ground-mask-stop {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: 80%;
+}
+
+/* ground -- backgroundfinal.png as hunter preprocessed it. no filter
+   chain, no brightness shift, no blur. the only treatment is the
+   clockwise rotation (so the source's upper-left region pivots toward
+   the top of the composition) and the mask-image that fades the edges
+   to transparent (eye-first, expanding outward). edge softness comes
+   from the .hole2-arena__ground-blur underlay -- not from blurring
+   this sharp layer.
+
+   the image renders in two passes -- this base rule positions both,
+   and the inner/outer mask split lives below. the inner pass (no
+   modifier) sits below the projectile slot and carries the focal
+   core. the outer pass (--outer modifier) sits above projectiles +
+   the box, carrying just the halo band so escaped projectiles are
+   visually clipped */
+.hole2-arena__ground {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(35deg);
+  width: min(110vw, 1400px);
+  height: auto;
+  --ground-mask-r: 10%;
+  --ground-mask-stop: 80%;
+  opacity: 0;
+}
+
+/* inner mask -- the original alpha curve, unchanged. covers the
+   entire visible ground from opaque core out to the 100% fade-to-0
+   edge. the box interior sits inside this region, so projectiles in
+   the play area always render against the ground */
+.hole2-arena__ground:not(.hole2-arena__ground--outer) {
+  mask-image: radial-gradient(
+    ellipse var(--ground-mask-r) calc(var(--ground-mask-r) * 0.92) at 50% 38%,
+    rgba(0, 0, 0, 1)    var(--ground-mask-stop),
+    rgba(0, 0, 0, 0.55) calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.30),
+    rgba(0, 0, 0, 0.22) calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.55),
+    rgba(0, 0, 0, 0.06) calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.80),
+    rgba(0, 0, 0, 0)    100%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse var(--ground-mask-r) calc(var(--ground-mask-r) * 0.92) at 50% 38%,
+    rgba(0, 0, 0, 1)    var(--ground-mask-stop),
+    rgba(0, 0, 0, 0.55) calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.30),
+    rgba(0, 0, 0, 0.22) calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.55),
+    rgba(0, 0, 0, 0.06) calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.80),
+    rgba(0, 0, 0, 0)    100%
+  );
+}
+
+/* outer mask -- transparent across the focal core (so projectiles in
+   the play area render unobscured), picks up a moderate-alpha band
+   in the halo where escaped projectiles need to be visually clipped,
+   fades back to 0 at the edge. the rim band overlaps the inner mask's
+   tail -- the combined alpha is higher than the original tail there,
+   so the halo around the box reads as more present (which actually
+   helps anchor the arena box visually against the void) */
+.hole2-arena__ground--outer {
+  mask-image: radial-gradient(
+    ellipse var(--ground-mask-r) calc(var(--ground-mask-r) * 0.92) at 50% 38%,
+    rgba(0, 0, 0, 0)    calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.70),
+    rgba(0, 0, 0, 0.5)  calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.85),
+    rgba(0, 0, 0, 0.35) calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.95),
+    rgba(0, 0, 0, 0)    100%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse var(--ground-mask-r) calc(var(--ground-mask-r) * 0.92) at 50% 38%,
+    rgba(0, 0, 0, 0)    calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.70),
+    rgba(0, 0, 0, 0.5)  calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.85),
+    rgba(0, 0, 0, 0.35) calc(var(--ground-mask-stop) + (100% - var(--ground-mask-stop)) * 0.95),
+    rgba(0, 0, 0, 0)    100%
+  );
+}
+
+/* blurred underlay -- same source, same rotation, sized identically.
+   filter: blur() applied here, so the ground itself stays sharp. mask
+   is wider than the sharp layer's mask, so this layer is visible as a
+   soft halo extending beyond the sharp center -- and fades to
+   transparent further out, blending into the black field. registered
+   custom props share the same expand animation as the sharp layer.
+
+   like the sharp ground, the blur renders in two passes (inner +
+   outer) -- this base rule positions both, the mask split lives in
+   the rules just below */
+.hole2-arena__ground-blur {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(35deg);
+  width: min(110vw, 1400px);
+  height: auto;
+  /* heavier blur -- smears out the bright contrast spots so the halo
+     reads as a soft haze rather than a blurred copy of the saturated
+     reds. with the original 10px the bright areas were still recognizable
+     in the halo; 22px softens them substantially */
+  filter: blur(22px);
+  --ground-mask-r: 10%;
+  --ground-mask-stop: 80%;
+  opacity: 0;
+}
+
+/* inner mask for the blur -- original alpha curve, unchanged. wider
+   ellipse (1.5x the sharp layer) carries the full halo underneath
+   the sharp inner layer */
+.hole2-arena__ground-blur:not(.hole2-arena__ground-blur--outer) {
+  mask-image: radial-gradient(
+    ellipse calc(var(--ground-mask-r) * 1.5) calc(var(--ground-mask-r) * 0.92 * 1.5) at 50% 38%,
+    rgba(0, 0, 0, 1)    8%,
+    rgba(0, 0, 0, 0.5)  35%,
+    rgba(0, 0, 0, 0.22) 60%,
+    rgba(0, 0, 0, 0.07) 82%,
+    rgba(0, 0, 0, 0)    100%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse calc(var(--ground-mask-r) * 1.5) calc(var(--ground-mask-r) * 0.92 * 1.5) at 50% 38%,
+    rgba(0, 0, 0, 1)    8%,
+    rgba(0, 0, 0, 0.5)  35%,
+    rgba(0, 0, 0, 0.22) 60%,
+    rgba(0, 0, 0, 0.07) 82%,
+    rgba(0, 0, 0, 0)    100%
+  );
+}
+
+/* outer mask for the blur -- transparent across the inner halo,
+   picks up a soft band in the outer halo (where the sharp outer mask
+   also picks up). lower alpha than the sharp outer since the blur is
+   already a soft underlay -- doesn't need to dominate the rim */
+.hole2-arena__ground-blur--outer {
+  mask-image: radial-gradient(
+    ellipse calc(var(--ground-mask-r) * 1.5) calc(var(--ground-mask-r) * 0.92 * 1.5) at 50% 38%,
+    rgba(0, 0, 0, 0)    55%,
+    rgba(0, 0, 0, 0.25) 72%,
+    rgba(0, 0, 0, 0.15) 88%,
+    rgba(0, 0, 0, 0)    100%
+  );
+  -webkit-mask-image: radial-gradient(
+    ellipse calc(var(--ground-mask-r) * 1.5) calc(var(--ground-mask-r) * 0.92 * 1.5) at 50% 38%,
+    rgba(0, 0, 0, 0)    55%,
+    rgba(0, 0, 0, 0.25) 72%,
+    rgba(0, 0, 0, 0.15) 88%,
+    rgba(0, 0, 0, 0)    100%
+  );
+}
+
+/* fade-in + mask-expand for both layers. same delay so they rise
+   together; the sharp layer stays sharp, the blur layer halos around */
+.hole2-stage[data-phase="arena"] .hole2-arena__ground,
+.hole2-stage[data-phase="arena"] .hole2-arena__ground-blur {
+  animation:
+    hole2-fade-in 900ms ease-out 1000ms forwards,
+    hole2-ground-expand 2200ms cubic-bezier(0.3, 0.5, 0.45, 1) 1000ms forwards;
+}
+@keyframes hole2-ground-expand {
+  /* stronger gradient at the final state -- the opaque core drops to
+     18% of the ellipse radius, so 82% of the visible ellipse is fade
+     band. the image dissolves into the surrounding black far more
+     aggressively. the initial state stays tight on the eye */
+  0%   { --ground-mask-r: 10%; --ground-mask-stop: 75%; }
+  100% { --ground-mask-r: 70%; --ground-mask-stop: 18%; }
+}
+
+/* darken overlay -- multiply-blends a black vignette into the ground
+   beneath. transparent at the upper-mid focus area (where the eye is)
+   so the bright center reads natural; ramps to opaque black at the
+   viewport edges so saturated reds in the ground get crushed darker
+   before they meet the black field. fades in with the ground */
+.hole2-arena__ground-darken {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* narrow + very tall ellipse -- 32% wide, 90% tall. sides stay
+     aggressive (per hunter's spec). vertical stretched to 90% so the
+     bottom edge (62vh from the upper-mid center) sits at only ~69%
+     along the gradient instead of ~91% at the previous 68% height --
+     significantly more relaxed downward */
+  background: radial-gradient(
+    ellipse 32% 90% at 50% 38%,
+    transparent 18%,
+    rgba(0, 0, 0, 0.15) 38%,
+    rgba(0, 0, 0, 0.42) 58%,
+    rgba(0, 0, 0, 0.75) 78%,
+    rgba(0, 0, 0, 0.95) 92%,
+    #000 100%
+  );
+  mix-blend-mode: multiply;
+  opacity: 0;
+}
+.hole2-stage[data-phase="arena"] .hole2-arena__ground-darken {
+  animation: hole2-fade-in 900ms ease-out 1000ms forwards;
+}
+
+/* projectile slot -- empty container that defines the z-stratum where
+   bullet-hell entities mount. by DOM order it sits above the inner
+   ground stack (ground-blur, ground, ground-darken) and below the
+   outer ground + box, so anything appended here is visually clipped
+   by the outer mask wherever it drifts past the focal core. when the
+   gameplay layer ports back from /testbed, its rAF-driven projectile
+   spans/svgs land in this div */
+.hole2-arena__projectiles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* arena box -- evilbox.png, 80vh tall, native aspect kept. spins +
+   grows from a point near the sprite's resting position so it
+   visually expands AROUND the sprite. transform-origin top-center
+   anchors the growth at the sprite's position so the box grows down
+   and outward from there. starts at scale 0 with a 540deg rotation,
+   ends at scale 1 + 0deg. delay is 3500ms after phase=arena -- after
+   the ground's mask-expand mostly completes */
+.hole2-arena__box {
+  position: absolute;
+  left: 50%;
+  /* anchored near where the sprite settles -- the box grows downward
+     from this top edge. top:12vh + 80vh = bottom edge at 92vh, leaves
+     a thin breath of black above + below */
+  top: 12vh;
+  transform: translateX(-50%) scale(0) rotate(540deg);
+  transform-origin: 50% 0;
+  height: 80vh;
+  width: auto;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  opacity: 0;
+  /* slight red glow on the evilbox -- it sits on a black field, the
+     soft halo gives it some presence without lifting it off. stacked
+     drop-shadows broaden the falloff. opacity ramps the glow with the
+     box (filter applies before opacity in the pipeline) */
+  filter:
+    drop-shadow(0 0 6px rgba(255, 60, 60, 0.22))
+    drop-shadow(0 0 16px rgba(255, 30, 30, 0.12));
+}
+.hole2-stage[data-phase="arena"] .hole2-arena__box {
+  animation: hole2-box-spin-grow 2200ms linear 3500ms forwards;
+}
+@keyframes hole2-box-spin-grow {
+  /* rotation hand-shaped across stops -- starts at 720deg (2 full turns)
+     and burns through ~600deg in the first 35% while scale is still
+     under 0.55. small-size phase whirls fast, big-size phase barely
+     turns. scale ease-outs alongside. linear timing-function on the
+     rule keeps the keyframe-defined curve from getting double-eased */
+  0%   { transform: translateX(-50%) scale(0)    rotate(720deg); opacity: 0; }
+  8%   { transform: translateX(-50%) scale(0.15) rotate(500deg); opacity: 1; }
+  20%  { transform: translateX(-50%) scale(0.35) rotate(270deg); opacity: 1; }
+  35%  { transform: translateX(-50%) scale(0.55) rotate(120deg); opacity: 1; }
+  50%  { transform: translateX(-50%) scale(0.72) rotate(55deg);  opacity: 1; }
+  65%  { transform: translateX(-50%) scale(0.85) rotate(22deg);  opacity: 1; }
+  80%  { transform: translateX(-50%) scale(0.94) rotate(8deg);   opacity: 1; }
+  100% { transform: translateX(-50%) scale(1)    rotate(0deg);   opacity: 1; }
+}
+.hole2-arena__box-fallback {
+  position: absolute;
+  left: 50%;
+  top: 12vh;
+  transform: translateX(-50%) scale(0) rotate(540deg);
+  transform-origin: 50% 0;
+  height: 80vh;
+  aspect-ratio: 3 / 4;
+  border: 3px solid #fff;
+  box-shadow:
+    0 0 0 1px #000,
+    0 0 0 4px rgba(255, 255, 255, 0.4);
+  display: none;
+  opacity: 0;
+}
+.hole2-arena[data-box-missing] .hole2-arena__box-fallback {
+  display: block;
+}
+.hole2-stage[data-phase="arena"] .hole2-arena[data-box-missing] .hole2-arena__box-fallback {
+  animation: hole2-box-spin-grow 2200ms linear 3500ms forwards;
+}
+
+/* begin box -- gothic dialogue-styled call-to-action at the bottom of
+   the arena. evildialoge.png border (reused from .hole2-dialogue) so
+   it sits in the same visual family as the monologue boxes. only
+   appears once data-arena-ready flips; fades out when data-begun flips */
+.hole2-begin {
+  position: absolute;
+  left: 50%;
+  bottom: 1.4vh;
+  width: 240px;
+  margin-left: -120px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 520ms ease;
+  z-index: 14;
+  cursor: pointer;
+}
+/* arena-ready rule guarded with :not(begun) so the begun state cleanly
+   takes over without specificity wars. begin box only listens to clicks
+   in that narrow window between arena settle and the user committing */
+.hole2-stage[data-phase="arena"][data-arena-ready="true"]:not([data-begun="true"]) .hole2-begin {
+  opacity: 1;
+  pointer-events: auto;
+}
+.hole2-stage[data-begun="true"] .hole2-begin {
+  animation: hole2-begin-out 420ms ease forwards;
+  pointer-events: none;
+}
+@keyframes hole2-begin-out {
+  0%   { opacity: 1; transform: scaleY(1) translateY(0); }
+  55%  { opacity: 1; transform: scaleY(0.18) translateY(6px); }
+  100% { opacity: 0; transform: scaleY(0.02) translateY(14px); }
+}
+.hole2-begin__float {
+  position: relative;
+  /* same idle bob as dialogue floats but a touch slower -- the begin
+     prompt should feel like it's waiting for the user, not heckling */
+  animation: hole2-dialogue-float 6400ms ease-in-out infinite;
+  transform-origin: 50% 100%;
+}
+.hole2-begin__body {
+  position: absolute;
+  /* sit inside the un-ornamented interior of evildialoge.png at the
+     reduced 240x82.5 scale. percentages match .hole2-dialogue__body */
+  left: 4%;
+  right: 4%;
+  top: 11%;
+  bottom: 11%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.hole2-begin__label {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 500;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: #fff;
+  /* tracking pads the right edge optically -- mirror with left padding
+     so the label reads centered */
+  padding-left: 0.42em;
+  transition:
+    color 180ms linear,
+    text-shadow 220ms ease,
+    letter-spacing 220ms ease;
+}
+.hole2-begin:hover .hole2-begin__label,
+.hole2-begin:focus-visible .hole2-begin__label {
+  color: #FF2A2A;
+  text-shadow: 0 0 8px rgba(255, 42, 42, 0.45);
+  letter-spacing: 0.48em;
+}
+.hole2-begin:focus-visible { outline: none; }
+
+/* player placeholder -- standin for the real player sprite until that's
+   authored. positions just below the arena box on arena-ready, then
+   slides up to settle near the bottom-middle of the inner playfield
+   on begun. uses sprite.png (the only sprite asset we have) -- a soft
+   cool drop-shadow distinguishes it from the boss visually so the
+   placeholder still reads as a separate figure */
+.hole2-player {
+  position: absolute;
+  left: 50%;
+  /* matches the engine's default player resting position. now that
+     the clamps follow the INNER box, the resting top is
+     INNER_BOTTOM - SPRITE_H = 87.03 - 5.5 = ~81.5vh */
+  top: 81.5vh;
+  width: 4vh;
+  height: 5.5vh;
+  transform: translateX(-50%);
+  opacity: 0;
+  z-index: 8;
+  pointer-events: none;
+  transition: opacity 480ms ease;
+}
+/* arena-ready -- just fade in at the resting spot. no slide; the
+   engine takes over at the same coords on BEGIN so there's nothing
+   to telegraph */
+.hole2-stage[data-phase="arena"][data-arena-ready="true"]:not([data-begun="true"]) .hole2-player {
+  opacity: 1;
+}
+.hole2-player__body {
+  width: 100%;
+  height: 100%;
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.15));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole2-begin { transition: opacity 200ms ease; }
+  .hole2-begin__float { animation: none; }
+  .hole2-stage[data-begun="true"] .hole2-begin {
+    animation: none;
+    opacity: 0;
+  }
+  .hole2-player {
+    transition: opacity 200ms ease;
+  }
+}
+
+@keyframes hole2-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* ---- arena HUD ----------------------------------------------------
+   gothic pixel-byte strip mounted outside the evilbox. dimensions
+   key off the box's footprint -- evilbox.png is 320x327 (basically
+   square), height: 80vh, top: 12vh. width derives from the source
+   aspect so the hud's vertical strip lines up with the box's right
+   edge regardless of viewport. the bombs/hits use the same dashed
+   rule pattern (--dash-*) as section dividers, just running vertical
+   instead of horizontal */
+.hole2-hud {
+  --hud-box-h: 80vh;
+  --hud-box-w: calc(80vh * 320 / 327);
+  --hud-box-top: 12vh;
+  --hud-box-left: calc(50% - var(--hud-box-w) / 2);
+  --hud-box-right: calc(50% + var(--hud-box-w) / 2);
+  --hud-fg: #f4ecd6;
+  --hud-bg: rgba(0, 0, 0, 0.78);
+  --hud-stroke: 2px;
+  --hud-pip: 1.7vh;
+  --hud-gap: 1.4vh;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 420ms ease-out;
+  z-index: 6;
+}
+.hole2-hud[data-ready="true"] {
+  opacity: 1;
+}
+
+/* top lane -- boss health bar fills the lane left of the timer; the
+   timer sits at the top-outer-right of the box. lane height + offset
+   tuned so the bar reads as resting just above the box's top edge */
+.hole2-hud__top {
+  position: absolute;
+  top: calc(var(--hud-box-top) - 5.6vh);
+  left: var(--hud-box-left);
+  right: calc(100% - var(--hud-box-right));
+  height: 4.2vh;
+  display: flex;
+  align-items: stretch;
+  gap: var(--hud-gap);
+}
+
+/* boss health -- white-on-black outlined trough. fill is anchored to
+   the LEFT edge; as bossHealthPct decreases, the fill's right edge
+   moves leftward (the bar "goes to the left" as it depletes), leaving
+   black trough on the right next to the timer */
+.hole2-hud__health {
+  position: relative;
+  flex: 1 1 auto;
+  background: var(--hud-bg);
+  border: var(--hud-stroke) solid var(--hud-fg);
+  box-shadow:
+    0 0 0 1px #000,
+    0 0 8px rgba(255, 230, 180, 0.16);
+  overflow: hidden;
+  image-rendering: pixelated;
+}
+.hole2-hud__health-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  /* two-band fill so the bar has a subtle vertical break -- gothic
+     pixel feel without resorting to a gradient that smears */
+  background:
+    linear-gradient(to bottom,
+      #f4ecd6 0%, #f4ecd6 42%,
+      #c8b485 42%, #c8b485 100%);
+  transition: width 240ms ease-out;
+}
+
+/* timer -- monospace pixel readout. silkscreen if the font is loaded
+   (it is, used elsewhere in the site), mono fallback otherwise.
+   fixed width (was min-width) so the flex cell's outer rect is the
+   same on every frame -- otherwise the health bar to its left
+   re-flexes each tick and the right edge jitters by a sub-pixel */
+.hole2-hud__timer {
+  flex: 0 0 auto;
+  width: 11.6vh;
+  padding: 0 1.2vh;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--hud-bg);
+  border: var(--hud-stroke) solid var(--hud-fg);
+  box-shadow:
+    0 0 0 1px #000,
+    0 0 8px rgba(255, 230, 180, 0.16);
+  color: var(--hud-fg);
+  font-family: 'Silkscreen', var(--font-mono);
+  font-size: 2.2vh;
+  letter-spacing: 0.08em;
+  line-height: 1;
+}
+
+/* right strip -- two vertical columns separated by a vertical dashed
+   rule. spirit bombs (3) in the left column, hits (5) in the right.
+   strip is anchored just outside the box's right edge */
+.hole2-hud__right {
+  position: absolute;
+  top: var(--hud-box-top);
+  left: calc(var(--hud-box-right) + 1.8vh);
+  height: var(--hud-box-h);
+  display: flex;
+  align-items: flex-start;
+  gap: 1.4vh;
+}
+.hole2-hud__col {
+  display: flex;
+  flex-direction: column;
+  gap: 1vh;
+  padding-top: 1.4vh;
+  align-items: center;
+}
+.hole2-hud__col-label {
+  font-family: 'Silkscreen', var(--font-mono);
+  font-size: 1.1vh;
+  letter-spacing: 0.12em;
+  color: var(--hud-fg);
+  text-shadow: 0 0 0 #000, 1px 1px 0 #000;
+  padding-bottom: 0.4vh;
+}
+
+/* vertical dashed rule -- uses the same --dash-* tokens as section
+   dividers, just rotated to run top-to-bottom */
+.hole2-hud__sep {
+  width: var(--dash-thickness);
+  align-self: stretch;
+  background-image: linear-gradient(
+    to bottom,
+    var(--hud-fg) 0,
+    var(--hud-fg) var(--dash-len),
+    transparent var(--dash-len),
+    transparent var(--dash-stride)
+  );
+  background-size: 100% var(--dash-stride);
+  background-repeat: repeat-y;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+
+/* pip -- shared base for bombs + hits. data-active toggles fill */
+.hole2-hud__pip {
+  display: block;
+  width: var(--hud-pip);
+  height: var(--hud-pip);
+  border: var(--hud-stroke) solid var(--hud-fg);
+  background: transparent;
+  box-shadow: 0 0 0 1px #000;
+  image-rendering: pixelated;
+}
+.hole2-hud__pip[data-active="true"] {
+  background: var(--hud-fg);
+}
+/* bombs read as rotated squares (diamonds) so they're visually
+   distinct from the hits column at a glance. slightly smaller too */
+.hole2-hud__pip--bomb {
+  width: calc(var(--hud-pip) * 0.88);
+  height: calc(var(--hud-pip) * 0.88);
+  transform: rotate(45deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole2-stage[data-phase] .hole2-shadow,
+  .hole2-stage[data-phase] .hole2-sprite,
+  .hole2-stage[data-phase] .hole2-sprite__trail,
+  .hole2-stage[data-phase] .hole2-eclipse,
+  .hole2-stage[data-phase="arena"] .hole2-arena__ground,
+  .hole2-stage[data-phase="arena"] .hole2-arena__ground-mask,
+  .hole2-stage[data-phase="arena"] .hole2-arena__box,
+  .hole2-stage[data-phase="arena"] .hole2-arena__box-fallback {
+    animation: none;
+  }
+  .hole2-stage[data-phase="arena"] .hole2-arena__ground,
+  .hole2-stage[data-phase="arena"] .hole2-arena__ground-mask,
+  .hole2-stage[data-phase="arena"] .hole2-arena__box {
+    opacity: 1;
+  }
+  .hole2-stage[data-phase="arena"] .hole2-eclipse {
+    transform: translate(-50%, 50%) scale(90);
+  }
+  .hole2-stage[data-phase="arena"] .hole2-sprite {
+    /* reduced-motion -- snap straight to the settled position. matches
+       the new vh-sized resting transform (engine boss home) */
+    transform: translate(-50%, -62vh) scale(1);
+    opacity: 1;
+  }
+  .hole2-stage[data-phase="arena"] .hole2-arena__box,
+  .hole2-stage[data-phase="arena"] .hole2-arena__box-fallback {
+    transform: translateX(-50%) scale(1) rotate(0deg);
+    opacity: 1;
+  }
+  .hole2-stage[data-phase="arena"] .hole2-arena__ground,
+  .hole2-stage[data-phase="arena"] .hole2-arena__ground-blur {
+    --ground-mask-r: 70%;
+    --ground-mask-stop: 18%;
+    opacity: 1;
+  }
+  .hole2-stage[data-phase="arena"] .hole2-arena__ground-darken {
+    opacity: 1;
+  }
+}
+
+
+/* ============================================================
+   hole2 -- gameplay (ported from /testbed). everything below
+   is scoped under .hole2-game so the generic class names
+   (.arena, .boss, .player, .bullet, .hud, .shadow-orb, etc.)
+   don't bleed into the rest of the site. mount the game DOM
+   inside <div class="hole2-game"> within the existing
+   .hole2-arena. tokens at the top live on .hole2-game so they
+   cascade only inside the game subtree.
+   ============================================================ */
+
+  /* gameplay testbed for the hole2 arena. self-contained html+css+js
+     so hunter can iterate on player movement, hitbox tuning, hud
+     layout, bullet patterns, etc. without dragging the full vite build
+     through every change. open this file directly (file://) or serve
+     the project root with `python3 -m http.server` and hit /testbed/.
+     anything that feels right here ports back to src/components and
+     src/styles/global.css */
+
+  .hole2-game {
+    /* hud palette + dash tokens lifted from src/styles/tokens.css so
+       the testbed reads close to the deployed site */
+    --hud-fg: #f4ecd6;
+    --hud-bg: rgba(0, 0, 0, 0.78);
+    --hud-stroke: 2px;
+    --hud-pip: 1.7vh;
+    --dash-len: 12px;
+    --dash-stride: 16px;
+    --dash-thickness: 3px;
+    --box-border: 3px;       /* same thickness as the inner-box line */
+
+    /* arena geometry. mirrors the hole2 arena in the real site --
+       80vh-tall box anchored at top:12vh, source aspect ~320:327 */
+    --box-h: 80vh;
+    --box-w: calc(80vh * 320 / 327);
+    --box-top: 12vh;
+    --box-left: calc(50% - var(--box-w) / 2);
+    --box-right: calc(50% + var(--box-w) / 2);
+
+    --hitbox-green: #19ff5a;
+
+    /* gothic-victorian font stack. blackletter for labels, period
+       serif for digits/body, roman inscriptional caps for movement
+       title cards (more legible at the 1.3s wipe-in cadence than
+       blackletter, and reads as "chiseled" rather than "scrawled" --
+       fits an opera bill). fallbacks land on the system serif so
+       offline iteration still feels right */
+    --font-display: 'UnifrakturMaguntia', 'Cormorant Garamond', 'Times New Roman', serif;
+    --font-body:    'IM Fell English', 'EB Garamond', 'Cormorant Garamond', Georgia, serif;
+    --font-spell:   'Cinzel', 'Cormorant Garamond', 'Times New Roman', serif;
+  }
+
+  /* NB: the testbed shipped a bare `html, body { background:#000;
+     height:100vh; width:100vw; overflow:hidden; ... }` rule here.
+     that rule clobbered the whole site (no scroll, wrong font, black
+     bg) the moment global.css loaded, regardless of route. dropped --
+     the .hole2-stage overlay already pins itself fixed inset:0, so
+     it owns the viewport during hole2 without needing html/body
+     overrides. */
+
+  /* every rule below was originally a bare top-level selector in the
+     /testbed copy (`.arena`, `.boss`, `.player`, etc.). CSS doesn't
+     nest by indentation -- they were leaking globally and clobbering
+     the main page. wrapping the block in `.hole2-game { ... }` plus
+     native CSS nesting (Baseline 2023, supported in Hunter's target
+     browsers) prepends `.hole2-game ` to each descendant rule so the
+     gameplay styles only land inside the game subtree. */
+.hole2-game {
+
+  /* testing-only greyish-blue field. real arena (hole2 page) is the
+     post-eclipse black; this lighter ground is purely so the boss's
+     black shadow orbs are visible while we tune patterns. swap back
+     to #000 (or a near-black) before porting */
+  .arena {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 6;
+  }
+
+  /* arena box -- placeholder outline standing in for evilbox.png.
+     swap to <img src="../public/evilbox.png"> if hunter wants to see
+     the real frame */
+  .arena__box {
+    display: none;
+    position: absolute;
+    top: var(--box-top);
+    left: var(--box-left);
+    width: var(--box-w);
+    height: var(--box-h);
+    border: 3px solid var(--hud-fg);
+    box-sizing: border-box;
+    box-shadow:
+      0 0 0 1px #000,
+      0 0 0 4px rgba(255, 230, 180, 0.18),
+      0 0 28px rgba(255, 60, 60, 0.18);
+  }
+
+  /* boss anchor -- not the real sysphus, just a placeholder marker
+     near the top of the arena so the player has something to read as
+     "the thing on the other end" while we tune mechanics. its
+     bounding rect IS the boss hitbox for collision (see js); the
+     dashed inner outline visualizes that for the testbed */
+  .boss {
+    position: absolute;
+    top: calc(var(--box-top) + 5vh);
+    left: 50%;
+    width: 6vh;
+    height: 10vh;
+    /* sprite.png lives inside via .boss__body now; container itself is
+       transparent + just owns the per-frame transform. --boss-x /
+       --boss-y are written each frame by updateBossMovement. --boss-dir
+       is +1 / -1; sprite flips via scaleX on the parent so the figure
+       faces wherever it's drifting */
+    transform: translate(calc(-50% + var(--boss-x, 0px)), var(--boss-y, 0px)) scaleX(var(--boss-dir, 1));
+    filter: drop-shadow(0 0 12px rgba(255, 30, 30, 0.32));
+    pointer-events: none;
+    z-index: 5;
+  }
+  .boss__body {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+  .boss__hitbox {
+    position: absolute;
+    inset: 0;
+    /* invisible -- the real hitbox math runs against the bounding rect
+       in JS; the dashed outline was a testbed-only debugging aid */
+    pointer-events: none;
+  }
+  /* tick the boss briefly on a hit -- helpful visual feedback while
+     tuning bullet damage. js toggles the data-hit attribute */
+  .boss[data-hit="true"] {
+    filter: drop-shadow(0 0 18px rgba(255, 80, 80, 0.7));
+  }
+
+  /* touhou-style afterimage trail. container is anchored at the boss's
+     home (same top/left/size baseline as .boss, minus the per-frame
+     --boss-x/y offset). each ghost inside lives at a lagged pose via
+     its own --ax/--ay/--ad. --trail-strength is the velocity gate; it
+     multiplies into every ghost's opacity so they all fade together
+     when the boss holds still. z-index 4 keeps the trail BEHIND .boss
+     (z 5) regardless of dom order */
+  .boss__trail {
+    position: absolute;
+    top: calc(var(--box-top) + 5vh);
+    left: 50%;
+    width: 6vh;
+    height: 10vh;
+    transform: translateX(-50%);
+    pointer-events: none;
+    z-index: 4;
+    --trail-strength: 0;
+  }
+  .boss__afterimage {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    /* lag pose -- translate carries the ghost out from the container's
+       (boss home) origin to wherever the lagged sample sits. scaleX
+       picks up the lagged facing dir */
+    transform: translate(var(--ax, 0px), var(--ay, 0px)) scaleX(var(--ad, 1));
+    /* soft ghost feel without trashing the pixel art -- minimal blur
+       so each ghost still reads as the boss sprite. screen blend +
+       red glow add light against the dark arena. bumped shadow alpha
+       so the ghosts pick up more haze even at the longer lag indices */
+    filter: blur(0.4px) drop-shadow(0 0 11px rgba(200, 50, 70, 0.72));
+    mix-blend-mode: screen;
+    /* combined opacity = per-ghost --lag-alpha * --trail-strength.
+       trail-strength is the JS velocity gate; lag-alpha steps down
+       per ghost so the farther ones read fainter */
+    opacity: calc(var(--lag-alpha, 0.4) * var(--trail-strength, 0));
+    /* soften the gate so micro frame-to-frame velocity jitter doesn't
+       cause flicker. layout-safe property only */
+    transition: opacity 90ms linear;
+    will-change: transform, opacity;
+  }
+  .boss__afterimage[data-lag="1"] { --lag-alpha: 0.95; }
+  .boss__afterimage[data-lag="2"] { --lag-alpha: 0.72; }
+  .boss__afterimage[data-lag="3"] { --lag-alpha: 0.5; }
+
+  /* player -- wraps the sprite svg + hitbox. translateX is driven by
+     --player-x, written every rAF by the game loop. positioned in the
+     lower third of the arena like a standard touhou player. sized
+     down -- the player should read as a tiny figure inside the arena,
+     not a stage element on its own. sprite is 4vh x 5.5vh (was 6vh,
+     originally 8vh); top offset stepped 11vh -> 9vh -> 8.5vh as the
+     legs shortened, so the feet stay anchored at the same Y while
+     the figure compresses upward */
+  .player {
+    position: absolute;
+    /* default top -- feet land at the INNER box floor (~87vh) rather
+       than the outer floor. inner bottom = 12 + 80 * (1 - 20/322) =
+       87.03vh; sprite-h = 5.5vh, so default sprite-top sits at
+       87.03 - 5.5 = ~81.5vh. previous 8.5vh offset put the feet 2vh
+       below the inner floor */
+    top: calc(var(--box-top) + var(--box-h) - 10.47vh);
+    left: 50%;
+    width: 4vh;
+    height: 5.5vh;
+    transform: translate(calc(-50% + var(--player-x, 0px)), var(--player-y, 0px));
+    z-index: 4;
+    /* default hitbox color -- setOutput overrides via inline style on
+       this element. declaring the default on .player (the parent of
+       .player__hitbox) rather than on .player__hitbox itself is load-
+       bearing: a same-element declaration would beat the inherited
+       inline value via the cascade, and the hitbox color would never
+       change. inheriting from the parent keeps the inline override on
+       top */
+    --hitbox-color: var(--hitbox-green);
+  }
+  .player__svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.15));
+  }
+  /* immunity flicker -- after taking a hit the player gets 3s of
+     invulnerability; data-immune=true drives a fast opacity toggle so
+     the figure visibly stutters between visible + faded states. js
+     clears the attribute when the i-frames expire */
+  .player[data-immune="true"] {
+    animation: player-flicker 110ms steps(2) infinite;
+  }
+  /* "pop" effect -- runs once on the inner svg when the player takes
+     damage. brief scale + brightness flash so the hit reads visually
+     before the respawn snap + flicker kick in. applied to .player__svg
+     so the outer .player can still hold its translate transform */
+  .player[data-popped="true"] .player__svg {
+    animation: player-pop 220ms ease-out;
+  }
+
+  /* torso hitbox -- colored outline on the upper body. tuned to
+     the placeholder svg's geometry; needs re-tuning if the sprite art
+     changes. with the compressed 16x22 sprite (legs shortened from 6
+     to 4), shoulders + torso span y=7..15 of 22 viewBox units = 32%
+     ..68% -- so top 32%, height 36% lands the rect on the actual
+     chest/abdomen. --hitbox-color is set per-frame by setOutput to
+     match the active GLOBE LVL pip color (green/blue/purple/yellow/
+     white as output ramps 1->5). default falls back to the old green
+     so the element still reads as a hitbox before any setOutput call
+     lands */
+  .player__hitbox {
+    position: absolute;
+    left: 28%;
+    width: 44%;
+    top: 32%;
+    height: 36%;
+    border: 2px solid var(--hitbox-color);
+    pointer-events: none;
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.55),
+      0 0 8px color-mix(in srgb, var(--hitbox-color) 70%, transparent),
+      inset 0 0 4px color-mix(in srgb, var(--hitbox-color) 35%, transparent);
+  }
+
+  /* bullets -- placeholder cubes that fly upward from the player.
+     spawned by the fire loop while z is held; updated in rAF; pruned
+     when they hit the boss hitbox or exit the arena. position is set
+     via inline style.left + top in px, transform centers on point */
+  .bullets {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 3;
+  }
+  .bullet {
+    position: absolute;
+    width: 0.7vh;
+    height: 0.7vh;
+    background: var(--hud-fg);
+    transform: translate(-50%, -50%);
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.5),
+      0 0 4px rgba(255, 230, 180, 0.6);
+    image-rendering: pixelated;
+  }
+
+  /* globe -- collectible power item. drops from the boss when its
+     health crosses below 15% (one per phase). drifts downward through
+     the arena; player touches it to advance the GLOBE LVL by one.
+     colored as the *next* level (the tier the player will become),
+     so the visual previews the upgrade. 1.8vh square pixel-art piece
+     matching the GLOBE LVL pip ladder. translate via inline left/top
+     in px each frame; scale + opacity handled by data-spawning /
+     data-collecting attribute animations */
+  .globe {
+    position: absolute;
+    width: 1.8vh;
+    height: 1.8vh;
+    background: var(--globe-color, #fff);
+    border: 2px solid var(--globe-color, #fff);
+    box-sizing: border-box;
+    transform: translate(-50%, -50%);
+    box-shadow:
+      0 0 0 1px #000,
+      0 0 12px color-mix(in srgb, var(--globe-color, #fff) 65%, transparent),
+      0 0 22px color-mix(in srgb, var(--globe-color, #fff) 35%, transparent);
+    image-rendering: pixelated;
+    pointer-events: none;
+  }
+  /* spawn pop -- brief grow-in so the globe doesn't just appear out
+     of nowhere. plays once when the dom node is mounted */
+  .globe[data-spawning="true"] {
+    animation: globe-spawn 320ms ease-out;
+  }
+  /* collect pop -- grow-and-fade when the player picks the globe up.
+     the per-frame inline transform stops driving once data-collecting
+     is set, so the animation owns the final position. element is
+     removed from the dom after the anim completes */
+  .globe[data-collecting="true"] {
+    animation: globe-collect 240ms ease-out forwards;
+  }
+  /* phase-transition overlay -- movement title-card frame.
+     shaded fullscreen, hexagram star scale-spawns + spins in the
+     middle, caption + sub grow outwards from center underneath.
+     mounted always, fades in via [data-show="true"], pointer-events
+     stay off so gameplay isn't clickable through it (and it doesn't
+     block the player either). showTransition restarts the animations
+     by toggling data-show off + on with a forced reflow between */
+  .phase-transition {
+    position: fixed;
+    inset: 0;
+    background: rgba(4, 4, 10, 0.86);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3vh;
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 380ms ease-out;
+  }
+  .phase-transition[data-show="true"] { opacity: 1; }
+
+  /* hexagram star -- the title-card emblem. wrapper handles the
+     spawn-from-center scale; the inner svg spins. composing the two
+     transforms via parent/child keeps either animation from clobbering
+     the other's transform property */
+  .phase-transition__hex {
+    width: 26vh;
+    height: 26vh;
+    display: grid;
+    place-items: center;
+    transform-origin: center;
+  }
+  .phase-transition[data-show="true"] .phase-transition__hex {
+    animation: hexagram-spawn 720ms cubic-bezier(0.18, 0.85, 0.32, 1.05) both;
+  }
+  /* inner star -- two overlaid triangle polygons. stroke in cream
+     against a soft inner red fill; drop-shadow does the outer glow */
+  .phase-transition__hex-star {
+    width: 100%;
+    height: 100%;
+    display: block;
+    transform-origin: center;
+    filter: drop-shadow(0 0 6px rgba(255, 60, 60, 0.55));
+  }
+  .phase-transition__hex-star polygon {
+    fill: rgba(140, 30, 30, 0.18);
+    stroke: var(--hud-fg);
+    stroke-width: 1.4;
+    stroke-linejoin: miter;
+    vector-effect: non-scaling-stroke;
+  }
+  /* spin -- starts with a backspin so the star whips into place during
+     the wrapper's scale-spawn, then eases into a slow drift while the
+     card holds. ease-out so most of the rotation lands inside the
+     first ~700ms and the tail reads as a gentle continued turn */
+  .phase-transition[data-show="true"] .phase-transition__hex-star {
+    animation: hexagram-spin 4.2s cubic-bezier(0.2, 0.85, 0.4, 1.0) both;
+  }
+
+  /* caption -- movement title declaration. Cinzel at 700 reads as
+     an inscriptional gravestone-cap; letter-spacing kept wide so the
+     caps don't crowd. blackletter still owns the smaller HIT X /
+     output-level labels via --font-display */
+  .phase-transition__caption {
+    font-family: var(--font-spell);
+    font-weight: 700;
+    font-size: 4.2vh;
+    letter-spacing: 0.16em;
+    color: var(--hud-fg);
+    text-align: center;
+    line-height: 1.05;
+    transform-origin: center;
+    text-shadow:
+      0 0 0 #000,
+      2px 2px 0 #000,
+      0 0 18px rgba(255, 60, 60, 0.35);
+  }
+  .phase-transition__sub {
+    font-family: var(--font-body);
+    font-size: 1.6vh;
+    letter-spacing: 0.32em;
+    color: rgba(255, 230, 180, 0.55);
+    margin-top: -1vh;
+    transform-origin: center;
+  }
+  /* text grows outwards from the middle -- scale 0 -> 1 with a small
+     overshoot via the bezier (final y > 1). caption fires first, sub
+     follows a beat later so the title reads as the headline + the
+     phase-N tag settles underneath */
+  .phase-transition[data-show="true"] .phase-transition__caption {
+    animation: title-text-spawn 600ms cubic-bezier(0.2, 0.7, 0.35, 1.15) 120ms both;
+  }
+  .phase-transition[data-show="true"] .phase-transition__sub {
+    animation: title-text-spawn 500ms cubic-bezier(0.2, 0.7, 0.35, 1.15) 340ms both;
+  }
+
+  /* shadow orbs -- boss-fired projectiles. small black circles with a
+     dark ring + soft inky halo. read as "shadows" against the lighter
+     arena. spawned by the per-pattern functions; collide with the
+     player torso hitbox to route through takeDamage. visually distinct
+     from player bullets (which are white squares) */
+  .shadow-orb {
+    position: absolute;
+    width: 1.4vh;
+    height: 1.4vh;
+    background: #050509;
+    border: 1px solid #16161e;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 4;
+    box-shadow:
+      0 0 6px rgba(0, 0, 0, 0.65),
+      inset 0 0 3px rgba(255, 255, 255, 0.06);
+  }
+  /* beam variant -- elongated rectangle aligned with velocity. used by
+     phase 2 cross beams. inline transform from js handles rotation
+     (translate -50% -50% + rotate) since the angle is per-orb */
+  .shadow-orb--beam {
+    width: 0.9vh;
+    height: 2.8vh;
+    border-radius: 0.45vh / 1.4vh;
+    background: #060610;
+    box-shadow:
+      0 0 8px rgba(0, 0, 0, 0.75),
+      inset 0 0 4px rgba(255, 255, 255, 0.08);
+  }
+  /* big variant -- chunkier orbs for the phase-3 closing spiral. same
+     ink, just scaled up so the winding arms read at climax weight */
+  .shadow-orb--big {
+    width: 2.4vh;
+    height: 2.4vh;
+    box-shadow:
+      0 0 10px rgba(0, 0, 0, 0.75),
+      inset 0 0 4px rgba(255, 255, 255, 0.07);
+  }
+
+  /* radial damage-zone beam -- straight beam from boss center, persists
+     for its lifetime as a hazard, slowly rotates, then fades. black
+     register matches the shadow-orbs so it reads as the same family
+     of hazard, just a sustained zone instead of a flying projectile.
+     transform-origin is top-center so rotation pivots at the boss
+     end of the beam, not its midpoint. inline transform composes
+     translate-to-center + rotate; opacity is toggled via data-on for
+     the fade-in/fade-out transitions */
+  .radial-beam {
+    position: absolute;
+    pointer-events: none;
+    background: linear-gradient(to bottom,
+      rgba(5, 5, 9, 0.92) 0%,
+      rgba(5, 5, 9, 0.55) 55%,
+      rgba(5, 5, 9, 0) 100%);
+    box-shadow:
+      0 0 8px rgba(0, 0, 0, 0.75),
+      0 0 18px rgba(0, 0, 0, 0.4);
+    transform-origin: 50% 0%;
+    z-index: 3;
+    opacity: 0;
+    transition: opacity 220ms ease-out;
+    will-change: transform, opacity;
+  }
+  .radial-beam[data-on="true"] { opacity: 1; }
+
+  /* phase 3 -- spinning + projectile. outer div positions + centers
+     via translate(-50%, -50%); inline transform also carries the
+     per-frame rotation (continuous spin during flight, then locked to
+     a fixed orientation after settling). bars are real child divs (not
+     pseudo-elements) so the bar thicknesses can be set in px against
+     vh -- pseudos can't read parent inline px values easily */
+  .spinning-plus {
+    position: absolute;
+    z-index: 5;
+    pointer-events: none;
+  }
+  .spinning-plus__bar {
+    position: absolute;
+    background: #050509;
+    box-shadow: 0 0 4px rgba(0, 0, 0, 0.75);
+    border-radius: 0.25vh;
+  }
+  .spinning-plus__bar--h {
+    left: 0; right: 0; top: 50%;
+    transform: translateY(-50%);
+    height: 22%;
+  }
+  .spinning-plus__bar--v {
+    top: 0; bottom: 0; left: 50%;
+    transform: translateX(-50%);
+    width: 22%;
+  }
+
+  /* phase 3 -- preview telegraph (thin cross), shown during the
+     prewarn window. semi-transparent + slow pulse so it reads as a
+     warning, not a hazard. when the firing beams kick in, this gets
+     removed + replaced by .plus-beam */
+  .plus-preview {
+    position: absolute;
+    z-index: 3;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 200ms ease-out;
+  }
+  .plus-preview[data-on="true"] { opacity: 1; }
+  .plus-preview__bar {
+    position: absolute;
+    background: rgba(5, 5, 9, 0.42);
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.45);
+    animation: plus-preview-pulse 520ms ease-in-out infinite alternate;
+  }
+  .plus-preview__bar--h {
+    left: 0; right: 0; top: 50%;
+    transform: translateY(-50%);
+  }
+  .plus-preview__bar--v {
+    top: 0; bottom: 0; left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* phase 3 -- primary firing cross beams. wider than the preview,
+     narrower than phase 2's radial beams (which are 3.4vh). these are
+     the actual damage zones */
+  .plus-beam {
+    position: absolute;
+    z-index: 3;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 180ms ease-out;
+    will-change: opacity;
+  }
+  .plus-beam[data-on="true"] { opacity: 1; }
+  .plus-beam__bar {
+    position: absolute;
+    background: rgba(5, 5, 9, 0.88);
+    box-shadow:
+      0 0 10px rgba(0, 0, 0, 0.7),
+      0 0 22px rgba(0, 0, 0, 0.35);
+  }
+  .plus-beam__bar--h {
+    left: 0; right: 0; top: 50%;
+    transform: translateY(-50%);
+  }
+  .plus-beam__bar--v {
+    top: 0; bottom: 0; left: 50%;
+    transform: translateX(-50%);
+  }
+
+  /* phase 3b -- tower. topdown view, so a tower (vertical column from
+     the ground) projects to a circle -- the column's footprint. anchor
+     is the circle's center. scale grows from 0 to 1 during the extend
+     window, holds through charge + spin, then opacity fades after the
+     teeth have flown. radial gradient gives it a slight 3d hint
+     (denser at center, softer at the edge) without breaking the
+     topdown read */
+  .tower {
+    position: absolute;
+    background: radial-gradient(circle,
+      rgba(5, 5, 9, 0.92) 0%,
+      rgba(5, 5, 9, 0.62) 65%,
+      rgba(5, 5, 9, 0.32) 100%);
+    border-radius: 50%;
+    box-shadow:
+      0 0 8px rgba(0, 0, 0, 0.7),
+      0 0 18px rgba(0, 0, 0, 0.35);
+    transform-origin: 50% 50%;
+    z-index: 3;
+    pointer-events: none;
+    transition: transform 700ms cubic-bezier(0.2, 0.7, 0.3, 1.0);
+    will-change: transform, opacity;
+  }
+  /* launch flash -- brief brightness pulse the moment teeth fly off */
+  .tower[data-launch="true"] {
+    animation: tower-launch-flash 280ms ease-out;
+  }
+
+  /* phase 3b -- tooth. cursor-pointer silhouette, oriented along
+     velocity. clip-path defines the arrowhead-at-tip + kinked-tail
+     shape; the local +x edge of the bounding rect IS the tip, so the
+     rotate(atan2(vy,vx)) on spawn lands the tip in the direction of
+     motion. drop-shadow follows the clipped polygon (box-shadow would
+     halo the rectangle bounding box, which leaks past the silhouette
+     edges -- noticeable on a dark field) */
+  .tooth {
+    position: absolute;
+    background: #050509;
+    filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.7));
+    pointer-events: none;
+    z-index: 4;
+    clip-path: polygon(
+      100% 50%,
+      30% 12%,
+      42% 42%,
+      0% 32%,
+      18% 92%,
+      52% 62%,
+      44% 92%
+    );
+  }
+
+  /* big bullets (output 4-5) -- chunkier square, brighter halo. same
+     spawn pipeline, just a different visual + a damage multiplier */
+  .bullet--big {
+    width: 1.5vh;
+    height: 1.5vh;
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.7),
+      0 0 10px rgba(255, 230, 180, 0.85),
+      0 0 18px rgba(255, 230, 180, 0.45);
+  }
+
+  /* phase 3 -- shadow portal. dark ellipse the boss steps through
+     between scatter cycles. expands from scale 0 to 1 during the
+     opening beat, holds while the boss fades through, then collapses
+     back to 0. red rim + dark vignette so it reads as Maestrul's
+     shadow register, not just a generic black blob. transform sets
+     translate(-50%, -50%) at the configured anchor; the inline
+     transform composes that with scale + a slight rotate ticked from js
+     each frame so the portal swirls visibly */
+  .shadow-portal {
+    position: absolute;
+    width: 9vh;
+    height: 5vh;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 50%,
+      #000 0%,
+      rgba(18, 4, 6, 0.96) 55%,
+      rgba(120, 18, 18, 0.32) 90%,
+      rgba(180, 40, 40, 0) 100%);
+    box-shadow:
+      0 0 16px rgba(0, 0, 0, 0.85),
+      0 0 38px rgba(140, 18, 18, 0.42),
+      inset 0 0 10px rgba(220, 60, 60, 0.45);
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 2;
+    transition: opacity 180ms ease-out;
+    will-change: transform, opacity;
+  }
+  .shadow-portal[data-on="true"] { opacity: 1; }
+
+  /* lance telegraph -- shadow on the player sprite stretched off in
+     the direction of the incoming lance. red outline reads as
+     "malevolent intent". --lance-angle (set inline) rotates the
+     stretched shadow; the player can read the angle, work out where
+     the lance will reach, and dodge during the telegraph window
+     (~800ms) before the lance materializes. transform-origin is
+     centered on the player's torso so the shadow extends OFF the
+     sprite rather than rotating it as a whole */
+  .player__lance-telegraph {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 5vh;
+    height: 16vh;
+    transform: translate(-50%, -50%) rotate(var(--lance-angle, 0deg)) scaleY(0);
+    transform-origin: 50% 50%;
+    background: linear-gradient(to top,
+      rgba(0, 0, 0, 0.0)  0%,
+      rgba(8, 2, 4, 0.55) 18%,
+      rgba(4, 0, 2, 0.85) 45%,
+      rgba(8, 2, 4, 0.75) 75%,
+      rgba(0, 0, 0, 0.0) 100%);
+    clip-path: polygon(
+      50% 0%,
+      60% 14%, 45% 28%, 60% 42%, 45% 56%,
+      60% 70%, 45% 84%,
+      55% 100%, 45% 100%,
+      55% 84%, 40% 70%,
+      55% 56%, 40% 42%, 55% 28%, 40% 14%
+    );
+    /* red outline -- drawn via two box-shadow rings + a drop-shadow
+       on the clipped silhouette. drop-shadow follows the polygon's
+       jagged edge instead of haloing the bounding rect */
+    filter:
+      drop-shadow(0 0 1px rgba(255, 30, 30, 0.95))
+      drop-shadow(0 0 4px rgba(220, 20, 30, 0.65))
+      drop-shadow(0 0 10px rgba(120, 0, 10, 0.45));
+    pointer-events: none;
+    opacity: 0;
+    z-index: 6;
+    transition: transform 320ms ease-out, opacity 240ms ease-out;
+    will-change: transform, opacity;
+  }
+  .player__lance-telegraph[data-on="true"] {
+    transform: translate(-50%, -50%) rotate(var(--lance-angle, 0deg)) scaleY(1);
+    opacity: 1;
+  }
+  .player__lance-telegraph[data-dissolving="true"] {
+    opacity: 0;
+    transition: opacity 280ms ease-in;
+  }
+
+  /* shadow lance -- pitch-black recursive branch tree. each segment
+     is a warped isosceles triangle (lightning-bolt-like) growing from
+     a parent. spawns at the player's position; the trunk + branches
+     fan outward, each branch perpendicular-ish to its parent. no red
+     gradient on the lance itself -- the menace is in the silhouette +
+     the recursion, not the color
+     */
+  .shadow-lance {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+    opacity: 1;
+    transition: opacity 700ms ease-out;
+    will-change: opacity;
+  }
+  .shadow-lance[data-dissolving="true"] { opacity: 0; }
+  .shadow-lance__segment {
+    position: absolute;
+    background: #000;
+    /* warped isosceles triangle silhouette -- tip at the top, base at
+       the bottom, three zigzag kinks at 30/50/70% along the length.
+       reads as a lightning-bolt segment */
+    clip-path: polygon(
+      50%  0%,
+      60% 30%, 45% 50%, 60% 70%,
+      55% 100%, 45% 100%,
+      40% 70%, 55% 50%, 40% 30%
+    );
+    /* per-instance inline style sets left/top/width/height + the
+       composed transform. transform-origin at the BASE so scaleY
+       grows the segment outward from its origin */
+    transform-origin: 50% 100%;
+    transition: transform 280ms cubic-bezier(0.2, 0.7, 0.35, 1.0);
+    will-change: transform;
+    /* faint red rim hugs the silhouette -- enough to read the jagged
+       shape against an already-dark arena */
+    filter:
+      drop-shadow(0 0 2px rgba(120, 8, 14, 0.55))
+      drop-shadow(0 0 6px rgba(40, 0, 6, 0.65));
+  }
+
+  /* shade's embrace -- phase 7b ultimate 1 (CSS class is .maiden-box,
+     kept for code identifier stability). ONE box at a time, rendered
+     as a square container with spike children on each of the four
+     edges. the container rotates + scales each frame (the rotate is
+     "the room turning"; the scale is the telescope collapsing). one
+     edge has a slot range with NO spikes -- that's the exit gap. the
+     player has to rotate around inside, line up with the gap, and
+     slip out before the box shrinks past their hitbox. on escape OR
+     on shrink-timeout the box collapses and the next box in the
+     chain spawns. since the spike children inherit the container's
+     transform, we only animate one element per frame */
+  .maiden-box {
+    position: absolute;
+    pointer-events: none;
+    z-index: 4;
+    /* inline left/top sets the unscaled, unrotated origin; the box
+       container is sized to startSize x startSize, transform-origin
+       defaults to its own center so rotate + scale both pivot on
+       the arena-center point we positioned it at */
+    transform-origin: 50% 50%;
+    transform: rotate(0rad) scale(1);
+    opacity: 0;
+    transition: opacity 240ms ease-out;
+    will-change: transform, opacity;
+  }
+  .maiden-box[data-stage="forming"]    { opacity: 0; }
+  .maiden-box[data-stage="active"]     { opacity: 1; }
+  /* collapsing -- fired when the player escapes or the ring shrinks
+     out. the transform keeps animating from js (so the final state
+     looks coherent) but the container fades for the visual payoff */
+  .maiden-box[data-stage="collapsing"] {
+    opacity: 0;
+    transition: opacity 280ms ease-out;
+  }
+
+  /* inward shadow trail -- four soft-black gradients projecting from
+     each wall into the box interior. fade in WITH the ring's
+     formation, scale + rotate with the container so the trail's
+     length stays proportional to the ring at any size. sits below
+     spikes in dom order so blades render on top */
+  .maiden-box__trail {
+    position: absolute;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 320ms ease-out 80ms;
+  }
+  .maiden-box[data-stage="active"] .maiden-box__trail { opacity: 1; }
+  .maiden-box__trail--top    { left: 0;  top: 0;     width: 100%; height: 30%;
+                               background: linear-gradient(to bottom, rgba(0,0,0,0.62) 0%, rgba(0,0,0,0) 100%); }
+  .maiden-box__trail--bottom { left: 0;  bottom: 0;  width: 100%; height: 30%;
+                               background: linear-gradient(to top,    rgba(0,0,0,0.62) 0%, rgba(0,0,0,0) 100%); }
+  .maiden-box__trail--left   { left: 0;  top: 0;     width: 30%;  height: 100%;
+                               background: linear-gradient(to right,  rgba(0,0,0,0.62) 0%, rgba(0,0,0,0) 100%); }
+  .maiden-box__trail--right  { right: 0; top: 0;     width: 30%;  height: 100%;
+                               background: linear-gradient(to left,   rgba(0,0,0,0.62) 0%, rgba(0,0,0,0) 100%); }
+
+  /* spike on a box edge. positioned in box-local coords (px) inside
+     the container, with the clip-path tip pointing inward. per-frame
+     motion is carried by the container's transform; the per-spike
+     transform here is only for the SPAWN animation -- scale from the
+     wall-anchored edge so spikes grow OUT of the wall. inline
+     transition-delay (set per spike) sweeps the formation around
+     the perimeter so the ring doesn't pop in all at once */
+  .maiden-box__spike {
+    position: absolute;
+    background: #000;
+    transition: transform 260ms cubic-bezier(.22, .9, .35, 1.15);
+    /* no box-shadow + no will-change: with ~100 spikes per ring x 4
+       rings, layered shadows blow out raster cost, and per-spike
+       layer promotion bloats compositor memory. the parent .maiden-box
+       already owns one shared layer for the whole ring */
+  }
+  /* per-edge -- clip-path tip points INWARD, transform-origin
+     anchors the spawn-scale to the wall edge */
+  .maiden-box__spike--top    { clip-path: polygon(0% 0%, 100% 0%, 50% 100%);
+                               transform-origin: 50%   0%; }
+  .maiden-box__spike--bottom { clip-path: polygon(0% 100%, 100% 100%, 50% 0%);
+                               transform-origin: 50% 100%; }
+  .maiden-box__spike--left   { clip-path: polygon(0% 0%, 100% 50%, 0% 100%);
+                               transform-origin:  0%  50%; }
+  .maiden-box__spike--right  { clip-path: polygon(100% 0%, 0% 50%, 100% 100%);
+                               transform-origin:100%  50%; }
+  /* forming -- spike tucked into the wall, perpendicular axis
+     squashed to zero. active state (default transform) is full size,
+     so the transition fires when js flips data-stage forming -> active */
+  .maiden-box[data-stage="forming"] .maiden-box__spike--top,
+  .maiden-box[data-stage="forming"] .maiden-box__spike--bottom { transform: scaleY(0); }
+  .maiden-box[data-stage="forming"] .maiden-box__spike--left,
+  .maiden-box[data-stage="forming"] .maiden-box__spike--right  { transform: scaleX(0); }
+
+  /* exit marker -- a thin dim rim painted along the gap slots so the
+     player can read where the way out is even when the rotation puts
+     it on the far side. lives on the same edge as the gap, between
+     the two adjacent spikes that bracket the missing slots */
+  .maiden-box__exit {
+    position: absolute;
+    background: linear-gradient(to right,
+      rgba(200, 200, 220, 0.0) 0%,
+      rgba(200, 200, 220, 0.32) 50%,
+      rgba(200, 200, 220, 0.0) 100%);
+    box-shadow: 0 0 6px rgba(200, 200, 220, 0.25);
+  }
+
+  /* per-spike wake -- extends OUTWARD from each spike's wall-side
+     base, past the container's bounds. lives in box-local coords so
+     it scales + rotates with the container; as the ring telescopes
+     inward the streak follows behind each spike, pointing back
+     toward where the spike used to be. clip-path tapers the streak
+     so the outer end is a narrow wisp + a small blur softens the
+     rectangular edges so the result feels dragged out rather than
+     painted as a hard bar */
+  .maiden-box__trail-spike {
+    position: absolute;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 320ms ease-out 140ms;
+    /* no filter: blur here -- a ~1.4px blur across ~100 trail
+       elements per ring is the steady-state perf killer when 4
+       rings are alive. the clip-path taper + multi-stop gradient
+       already give the wisp feel without the GPU filter cost */
+  }
+  .maiden-box[data-stage="active"] .maiden-box__trail-spike { opacity: 1; }
+  /* per-side: triangle clip-path with the WIDE BASE on the spike
+     side + the TIP at the outer end. that base matches the spike's
+     base exactly (same width, same x), so the wake reads as a flat
+     afterimage continuation of the spike silhouette pointing
+     outward. gradient is solid black at the base + fades to clear
+     at the outer tip. no rotation -- the wake is flat in box-local
+     and just rotates + scales with the parent ring */
+  .maiden-box__trail-spike--top {
+    background: linear-gradient(to top,    #000 0%, rgba(0,0,0,0.32) 45%, rgba(0,0,0,0) 100%);
+    clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+  }
+  .maiden-box__trail-spike--bottom {
+    background: linear-gradient(to bottom, #000 0%, rgba(0,0,0,0.32) 45%, rgba(0,0,0,0) 100%);
+    clip-path: polygon(50% 100%, 0% 0%, 100% 0%);
+  }
+  .maiden-box__trail-spike--left {
+    background: linear-gradient(to left,   #000 0%, rgba(0,0,0,0.32) 45%, rgba(0,0,0,0) 100%);
+    clip-path: polygon(0% 50%, 100% 0%, 100% 100%);
+  }
+  .maiden-box__trail-spike--right {
+    background: linear-gradient(to right,  #000 0%, rgba(0,0,0,0.32) 45%, rgba(0,0,0,0) 100%);
+    clip-path: polygon(100% 50%, 0% 0%, 0% 100%);
+  }
+
+  /* snake-curve segment -- phase 7b ultimate 2. each segment is a
+     tilted rect representing one straight leg of a snake's path
+     between two turn points. solid dark fill matching the shadow
+     register. dead segments (after the snake has stopped) fade
+     slightly so the player can still see them but they read as
+     residue rather than active hazards */
+  .snake-segment {
+    position: absolute;
+    /* pitch black fill + a dark halo so the trails read as shadow
+       seeping into the arena rather than red-tinted bars. matches the
+       shadow-lance + shadow-portal register from earlier phases */
+    background: #000;
+    box-shadow:
+      0 0 4px rgba(0, 0, 0, 0.95),
+      0 0 12px rgba(0, 0, 0, 0.6),
+      0 0 24px rgba(0, 0, 0, 0.35);
+    transform-origin: 0% 50%;
+    pointer-events: none;
+    z-index: 4;
+    will-change: width, transform;
+  }
+  /* dead-state retained for safety -- the immortal snake design
+     never fires this, but keeps the CSS hook around if self-kill
+     ever comes back. shadows fade slightly + lose their halo */
+  .snake-segment[data-dead="true"] {
+    opacity: 0.55;
+    box-shadow:
+      0 0 3px rgba(0, 0, 0, 0.6),
+      0 0 8px rgba(0, 0, 0, 0.35);
+  }
+
+  /* shadow puddle -- phase 7a's omnidirectional spray. dark elliptical
+     splotch on the arena floor that pulses for ~1.6s then "erupts"
+     into a recursive lance tree. visual register matches the shadow
+     portal / lance segments. no border, just a soft radial gradient
+     so the puddle reads as a smear rather than a portal */
+  .shadow-puddle {
+    position: absolute;
+    width: 8vh;
+    height: 5vh;
+    border-radius: 50%;
+    background: radial-gradient(ellipse at 50% 50%,
+      rgba(8, 2, 6, 0.92) 0%,
+      rgba(20, 4, 10, 0.78) 40%,
+      rgba(60, 10, 14, 0.45) 75%,
+      rgba(140, 20, 24, 0) 100%);
+    box-shadow:
+      0 0 10px rgba(80, 0, 8, 0.55),
+      0 0 24px rgba(40, 0, 6, 0.4);
+    transform: translate(-50%, -50%) scale(0);
+    opacity: 0;
+    pointer-events: none;
+    z-index: 2;
+    transition: transform 240ms ease-out, opacity 200ms ease-out;
+    will-change: transform, opacity;
+  }
+  .shadow-puddle[data-on="true"] {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+    animation: shadow-puddle-pulse 1200ms ease-in-out infinite;
+  }
+  .shadow-puddle[data-erupting="true"] {
+    animation: none;
+    transform: translate(-50%, -50%) scale(1.25);
+    opacity: 0;
+    transition: transform 200ms ease-out, opacity 280ms ease-out;
+  }
+
+  /* split-beam segment -- phase 6's recursive fork. solid black rect,
+     tilted + positioned per-instance via inline style. transform-
+     origin at the BASE (50% 100%) so scaleY animates the segment
+     growing from its parent's tip outward. data-fading toggles the
+     opacity fade for the final dissolve */
+  .split-beam {
+    position: absolute;
+    background: rgba(5, 5, 9, 0.94);
+    box-shadow:
+      0 0 10px rgba(0, 0, 0, 0.7),
+      0 0 22px rgba(0, 0, 0, 0.4);
+    transform-origin: 50% 100%;
+    transition: transform 380ms cubic-bezier(0.25, 0.7, 0.4, 1.0),
+                opacity 360ms ease-out;
+    pointer-events: none;
+    z-index: 4;
+    will-change: transform, opacity;
+  }
+  .split-beam[data-fading="true"] { opacity: 0; }
+
+  /* split-cross telegraph -- thin preview of the root cross at the
+     + projectile's settled position. signals "beams about to fork
+     out from here". fades in then out as the firing begins */
+  .split-preview {
+    position: absolute;
+    z-index: 3;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 200ms ease-out;
+  }
+  .split-preview[data-on="true"] { opacity: 0.75; }
+  .split-preview__bar {
+    position: absolute;
+    background: rgba(5, 5, 9, 0.5);
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.5);
+  }
+  .split-preview__bar--h { left: 0; right: 0; top: 50%; transform: translateY(-50%); }
+  .split-preview__bar--v { top: 0; bottom: 0; left: 50%; transform: translateX(-50%); }
+
+  /* swear bubble -- phase 6's rapid dialogue-transition projectile.
+     comic-book censored-curse text in a hole2-style dialogue box,
+     flying like bullets from the boss across the arena. color
+     scheme matches the existing hole2 dialogue: black body, white
+     border, white mono text. no collision damage -- pure visual
+     chatter as the boss roars back onto the field. tilt is per-
+     bubble via --swear-rot so the swarm reads as scattered shouts
+     rather than aligned text */
+  .swear-bubble {
+    position: absolute;
+    background: #050509;
+    border: 2px solid #fff;
+    /* slight outer offset for a "pixel paneled" feel matching the
+       hole2 evildialoge image's chunky white border */
+    box-shadow:
+      0 0 0 1px #050509,
+      0 0 0 3px rgba(255, 255, 255, 0.0),
+      2px 2px 0 #fff,
+      0 0 10px rgba(160, 20, 24, 0.35);
+    padding: 0.35vh 1.0vh;
+    font-family: 'Courier New', 'IBM Plex Mono', monospace;
+    font-weight: 700;
+    font-size: 2.0vh;
+    letter-spacing: 0.08em;
+    color: #fff;
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 8;
+    /* projectile pop-in -- short linear scale, no spring overshoot.
+       reads as "appearing" not "floating in" */
+    transform: translate(-50%, -50%) scale(0) rotate(var(--swear-rot, 0deg));
+    transition: transform 90ms ease-out,
+                opacity 160ms ease-out;
+    will-change: transform, opacity, left, top;
+  }
+  .swear-bubble[data-on="true"] {
+    transform: translate(-50%, -50%) scale(1) rotate(var(--swear-rot, 0deg));
+  }
+  .swear-bubble[data-leaving="true"] {
+    opacity: 0;
+  }
+
+  /* hud hide during phase 4 (and any future "boss is gone" beat).
+     opacity fade so the health bar + timer don't pop out. driven by
+     data-vanished on the .hud container -- toggled when the portal
+     exit fires + cleared on phase 5+ entry */
+  .hud[data-vanished="true"] {
+    opacity: 0;
+    transition: opacity 600ms ease-out;
+  }
+
+  /* boss fade during portal hops. opacity transitions match the
+     portal's expand/collapse window so the figure dissolves into the
+     ellipse rather than just blinking out. pointer-events stay on so
+     the hitbox math still resolves while fading (player bullets pass
+     through harmlessly when state.bossHittable is false -- not yet
+     wired, just a future hook) */
+  .boss[data-portaling="out"] {
+    opacity: 0;
+    transition: opacity 260ms ease-in;
+  }
+  .boss[data-portaling="in"] {
+    opacity: 1;
+    transition: opacity 260ms ease-out;
+  }
+  .boss[data-portaling="hidden"] {
+    opacity: 0;
+    transition: none;
+  }
+
+  /* spirit-bomb flash -- briefly lights the arena when x is pressed.
+     placeholder for whatever the real bomb visual becomes */
+  .bomb-flash {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 70%, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0));
+    opacity: 0;
+    pointer-events: none;
+    z-index: 5;
+    transition: opacity 80ms linear;
+  }
+  .bomb-flash[data-on="true"] {
+    opacity: 1;
+    transition: opacity 380ms ease-out;
+  }
+
+  /* spirit bomb -- "light elemental." expanding sun anchored at the
+     player. core disk + two ring layers (long rays + offset short
+     rays) so the silhouette reads as a sun rather than a flare. js
+     side wipes every active enemy projectile + grants iframes for
+     the bomb window. mix-blend-mode: screen brightens whatever it
+     overlays without painting solid yellow over the arena */
+  .spirit-bomb {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 200vh;
+    height: 200vh;
+    pointer-events: none;
+    z-index: 6;
+    opacity: 0;
+    transform: scale(0);
+    transform-origin: center center;
+    mix-blend-mode: screen;
+    will-change: transform, opacity;
+  }
+  .spirit-bomb[data-on="true"] {
+    animation: spirit-bomb-burst 900ms cubic-bezier(0.16, 0.78, 0.32, 1) forwards;
+  }
+  .spirit-bomb__rays,
+  .spirit-bomb__core {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+  }
+  /* long rays -- 12 wedges (30deg pitch, 12deg wide) masked to an
+     annulus so they don't cross the core */
+  .spirit-bomb__rays--long {
+    background: repeating-conic-gradient(
+      from 0deg,
+      rgba(255, 245, 184, 0.95) 0deg 12deg,
+      transparent              12deg 30deg
+    );
+    -webkit-mask: radial-gradient(circle at center,
+      transparent 8%, #000 14%, #000 50%, transparent 72%);
+            mask: radial-gradient(circle at center,
+      transparent 8%, #000 14%, #000 50%, transparent 72%);
+  }
+  /* short rays -- offset 15deg so they sit between the long ones.
+     narrower wedge, deeper amber, shorter mask. paired with long
+     rays the silhouette reads as 24 alternating arms */
+  .spirit-bomb__rays--short {
+    background: repeating-conic-gradient(
+      from 15deg,
+      rgba(255, 215, 80, 0.85) 0deg 9deg,
+      transparent              9deg 30deg
+    );
+    -webkit-mask: radial-gradient(circle at center,
+      transparent 10%, #000 16%, #000 36%, transparent 52%);
+            mask: radial-gradient(circle at center,
+      transparent 10%, #000 16%, #000 36%, transparent 52%);
+  }
+  /* core disk -- bright white center fading to amber. masked tight
+     so it doesn't bleed past where the rays start */
+  .spirit-bomb__core {
+    background: radial-gradient(circle at center,
+      #ffffff                    0%,
+      #fff7c8                   32%,
+      rgba(255, 215, 80, 0.7)   58%,
+      rgba(255, 200, 60, 0)    100%);
+    -webkit-mask: radial-gradient(circle at center,
+      #000 0%, #000 18%, transparent 30%);
+            mask: radial-gradient(circle at center,
+      #000 0%, #000 18%, transparent 30%);
+  }
+
+  /* ---- hud ----
+     top lane: thin-line health bar (left) sharing its y-axis with the
+     timer (right). bar spans the full inner box width and depletes
+     leftward as bossHealth drops. timer pins flush with the box's
+     right edge. everything else lives in a single vertical column on
+     the box's right edge: HIT X label, 3 bombs, literal "---", 5 hits */
+  .hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 10;
+    color: var(--hud-fg);
+  }
+  /* pre-BEGIN HUD preview gating -- the ArenaHud wrapper carries a
+     data-ready attribute that the live engine wrapper doesn't. so
+     this rule only targets the preview hud. fade matches the BEGIN
+     button's 520ms opacity transition so the two land together
+     once the arena box finishes spinning in */
+  .hole2-game[data-ready] .hud {
+    opacity: 0;
+    transition: opacity 520ms ease;
+  }
+  .hole2-game[data-ready="true"] .hud {
+    opacity: 1;
+  }
+
+  /* top lane -- flex row sitting just above the box, spanning its
+     full footprint. health bar grows to fill, timer holds its size on
+     the right. both children center on the lane's y-axis so the thin
+     bar reads as "level with" the timer text */
+  .hud__top {
+    position: absolute;
+    top: calc(var(--box-top) - 4.4vh);
+    left: var(--box-left);
+    right: calc(100% - var(--box-right));
+    height: 2.6vh;
+    display: flex;
+    align-items: center;
+    gap: 1.4vh;
+  }
+
+  /* health bar -- thin white line, height = the inner-box border
+     thickness. no trough, no outline. fill anchored left, shrinks
+     from the right as bossHealth drops. ambiguous on purpose -- no
+     label */
+  .hud__health {
+    position: relative;
+    flex: 1 1 auto;
+    height: var(--box-border);
+    background: transparent;
+  }
+  .hud__health-fill {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    background: var(--hud-fg);
+    transition: width 240ms ease-out;
+    box-shadow: 0 0 6px rgba(255, 230, 180, 0.32);
+  }
+
+  /* timer -- plain digits in the Victorian serif, no panel. fixed
+     width so the flex cell doesn't resize as digits change. tabular
+     nums + monospace fallback handle within-digit jitter; the explicit
+     width also covers the "--:--" fallback (dashes aren't numeric, so
+     tabular-nums doesn't apply to them). right-align so the colon
+     sits at the same x regardless of leading-zero / dash content */
+  .hud__timer {
+    flex: 0 0 auto;
+    width: 8vh;
+    text-align: right;
+    font-family: var(--font-body);
+    font-size: 2.6vh;
+    letter-spacing: 0.05em;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 8px rgba(255, 230, 180, 0.18);
+  }
+
+  /* the single vertical column on the right of the box. stack:
+     HIT X label -> 3 bombs -> "---" -> 5 hits. health bar lives in
+     the top lane now, no longer part of this column */
+  .hud__column {
+    position: absolute;
+    top: calc(var(--box-top) + 2vh);
+    left: calc(var(--box-right) + 1.8vh);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.9vh;
+  }
+
+  /* column labels (GLOBE LVL, LIGHT ELEMENTAL, LIFE) + the literal
+     --- separator. Cinzel inscriptional caps at 600 -- blackletter
+     chokes at this size, the roman caps stay legible while keeping
+     the gothic-victorian register intact. small caps tracking gives
+     the labels enough air to read as "labels" rather than "words".
+     text-align center + relaxed line-height so two-line labels read
+     as a single stacked unit */
+  .hud__label {
+    font-family: var(--font-spell);
+    font-weight: 600;
+    font-size: 1.6vh;
+    letter-spacing: 0.18em;
+    line-height: 1.1;
+    padding-top: 0.4vh;
+    text-align: center;
+    text-shadow: 0 0 0 #000, 1px 1px 0 #000;
+  }
+
+  /* pip rows -- bombs first, then "---", then hits in the right
+     column; outputs (5 pips) in the left column. each row is a
+     vertically-stacked element in the parent column */
+  .hud__bombs,
+  .hud__hits,
+  .hud__outputs {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5vh;
+  }
+
+  .hud__pip {
+    display: block;
+    width: var(--hud-pip);
+    height: var(--hud-pip);
+    border: var(--hud-stroke) solid var(--hud-fg);
+    background: transparent;
+    box-shadow: 0 0 0 1px #000;
+    box-sizing: border-box;
+  }
+  .hud__pip[data-active="true"] {
+    background: var(--hud-fg);
+  }
+
+  /* controls block -- the column's last section. CONTROLS label sits
+     above a compact 4-row list of kbd + action pairs. rows left-align
+     so the keys form a clean column under the cap label. body serif
+     for the action labels keeps them subordinate to the cap headers
+     of the column's stat sections (GLOBE LVL, LIGHT ELEMENTAL, LIFE) */
+  .hud__controls {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35vh;
+    padding-top: 0.2vh;
+  }
+  .hud__ctrl {
+    font-family: var(--font-body);
+    font-size: 1.35vh;
+    letter-spacing: 0.04em;
+    line-height: 1.2;
+    color: var(--hud-fg);
+    white-space: nowrap;
+  }
+  .hud__ctrl kbd {
+    display: inline-block;
+    padding: 0 0.45vh;
+    border: 1px solid rgba(255, 230, 180, 0.5);
+    border-radius: 2px;
+    background: rgba(255, 230, 180, 0.08);
+    margin: 0 0.15vh;
+    font-family: var(--font-body);
+    font-size: 1.2vh;
+    line-height: 1.3;
+    color: var(--hud-fg);
+  }
+  /* GLOBE LVL pips -- each level owns a color. ladder reads as a
+     power escalation: green (1) -> blue (2) -> purple (3) -> yellow
+     (4) -> white (5). active pip matches its level color in fill +
+     border + halo; inactive pips stay cream-outline like the rest of
+     the column so the dim ladder still reads as "more levels above
+     the current one". --pip-color is the per-level hue, picked up by
+     the colored-fill rule below */
+  .hud__outputs .hud__pip:nth-child(1) { --pip-color: #2ee85a; }
+  .hud__outputs .hud__pip:nth-child(2) { --pip-color: #4aa3ff; }
+  .hud__outputs .hud__pip:nth-child(3) { --pip-color: #b46cff; }
+  .hud__outputs .hud__pip:nth-child(4) { --pip-color: #ffd84e; }
+  .hud__outputs .hud__pip:nth-child(5) { --pip-color: #ffffff; }
+  .hud__outputs .hud__pip[data-active="true"] {
+    background: var(--pip-color);
+    border-color: var(--pip-color);
+    box-shadow:
+      0 0 0 1px #000,
+      0 0 6px color-mix(in srgb, var(--pip-color) 55%, transparent);
+  }
+  /* bombs read as rotated squares (diamonds) so they're visually
+     distinct from the hit squares at a glance */
+  .hud__pip--bomb {
+    width: calc(var(--hud-pip) * 0.88);
+    height: calc(var(--hud-pip) * 0.88);
+    transform: rotate(45deg);
+  }
+  /* debug overlay -- bottom-left corner readout, small text in body
+     serif so digits stay readable. legend used to share this rule;
+     the play controls now live inside the right hud column */
+  .debug {
+    display: none;
+    position: absolute;
+    bottom: 1vh;
+    left: 1vh;
+    color: var(--hud-fg);
+    font-family: var(--font-body);
+    font-size: 1.4vh;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 0.5vh 0.9vh;
+    border: 1px solid rgba(255, 230, 180, 0.28);
+    line-height: 1.4;
+    z-index: 20;
+    font-variant-numeric: tabular-nums;
+  }
+
+}
+/* ^ closes the .hole2-game wrapper opened above the .arena rule. */
+
+/* hoisted @keyframes -- per CSS Nesting spec, @keyframes
+   can't live inside a style rule and gets dropped by
+   spec-compliant parsers. names are unique enough to stay
+   global without collision risk. */
+@keyframes player-flicker {
+  0%, 49%   { opacity: 1; }
+  50%, 100% { opacity: 0.22; }
+}
+
+@keyframes player-pop {
+  0%   { transform: scale(1);    filter: brightness(1)   drop-shadow(0 0 0   rgba(255,255,255,0)); }
+  40%  { transform: scale(1.6);  filter: brightness(3)   drop-shadow(0 0 12px rgba(255,255,255,0.9)); opacity: 0.65; }
+  100% { transform: scale(1);    filter: brightness(1)   drop-shadow(0 0 0   rgba(255,255,255,0)); opacity: 1; }
+}
+
+@keyframes globe-spawn {
+  0%   { transform: translate(-50%, -50%) scale(0);   opacity: 0; }
+  60%  { transform: translate(-50%, -50%) scale(1.4); opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(1);   opacity: 1; }
+}
+
+@keyframes globe-collect {
+  0%   { transform: translate(-50%, -50%) scale(1);   opacity: 1; }
+  100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; }
+}
+
+@keyframes hexagram-spawn {
+  from { transform: scale(0); }
+  to   { transform: scale(1); }
+}
+
+@keyframes hexagram-spin {
+  from { transform: rotate(-300deg); }
+  to   { transform: rotate(60deg); }
+}
+
+@keyframes title-text-spawn {
+  from { transform: scale(0); opacity: 0; }
+  60%  { opacity: 1; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+@keyframes plus-preview-pulse {
+  from { opacity: 0.35; }
+  to   { opacity: 0.85; }
+}
+
+@keyframes tower-launch-flash {
+  0%   { filter: brightness(1.0); }
+  40%  { filter: brightness(2.6); }
+  100% { filter: brightness(1.0); }
+}
+
+@keyframes shadow-puddle-pulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(1);    opacity: 0.85; }
+  50%      { transform: translate(-50%, -50%) scale(1.08); opacity: 1; }
+}
+
+@keyframes spirit-bomb-burst {
+  0%   { transform: scale(0)    rotate(0deg);   opacity: 0;    }
+  8%   { opacity: 1; }
+  55%  { transform: scale(1.05) rotate(18deg);  opacity: 0.95; }
+  100% { transform: scale(1.5)  rotate(32deg);  opacity: 0;    }
+}
+
+/* ============================================================
+   hole2 win screen -- pixel-art fireworks + victory caption.
+   fired once when the player drops the boss in the final phase.
+   sits above the game DOM, below the page-level overlay so the
+   REND YOURSELF link (if re-shown) stays clickable
+   ============================================================ */
+.hole2-win {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* above .phase-transition (z 100) so victory always covers any
+     stray title-card animation that might fire on the death frame */
+  z-index: 200;
+  opacity: 0;
+  transition: opacity 700ms ease-out;
+}
+.hole2-win[data-on="true"] {
+  opacity: 1;
+}
+
+/* darken backdrop -- soft black wash so the fireworks read
+   against the arena. doesn't fully cover so the dimmed arena
+   still bleeds through */
+.hole2-win__dim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 80% 70% at 50% 50%,
+    rgba(0, 0, 0, 0.55) 0%,
+    rgba(0, 0, 0, 0.78) 60%,
+    rgba(0, 0, 0, 0.92) 100%
+  );
+}
+
+/* fireworks layer -- each burst is a positioned wrapper. inline
+   --hue + --x + --y per-burst. shards inside fan out via per-shard
+   --dx / --dy */
+.hole2-win__fireworks {
+  position: absolute;
+  inset: 0;
+}
+.hole2-firework {
+  position: absolute;
+  left: var(--x, 50%);
+  top: var(--y, 50%);
+  width: 0;
+  height: 0;
+  animation: hole2-fw-life 1900ms ease-out var(--delay, 0ms) infinite;
+}
+@keyframes hole2-fw-life {
+  0%   { opacity: 0; }
+  4%   { opacity: 1; }
+  68%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+/* core flash -- bright pixel-square at burst center, brief */
+.hole2-firework__flash {
+  position: absolute;
+  left: -1.6vh;
+  top: -1.6vh;
+  width: 3.2vh;
+  height: 3.2vh;
+  background: #fff;
+  image-rendering: pixelated;
+  box-shadow: 0 0 14px hsla(var(--hue, 40), 95%, 70%, 0.85);
+  animation: hole2-fw-flash 320ms ease-out var(--delay, 0ms) infinite;
+}
+@keyframes hole2-fw-flash {
+  0%   { transform: scale(0); opacity: 1; }
+  18%  { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0); opacity: 0; }
+}
+
+/* shards -- 14 chunky pixel squares fanning out. step-end keyframe
+   gives the trail a pixel-art chunked look (no smooth interp).
+   --dx/--dy are vh offsets at peak; gravity drops them slightly */
+.hole2-firework__shard {
+  position: absolute;
+  left: -0.45vh;
+  top: -0.45vh;
+  width: 0.9vh;
+  height: 0.9vh;
+  background: hsl(var(--hue, 40), 90%, 65%);
+  image-rendering: pixelated;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.55),
+    0 0 6px hsla(var(--hue, 40), 95%, 70%, 0.85);
+  animation: hole2-fw-shard 1900ms steps(18, end) var(--delay, 0ms) infinite;
+  transform: translate(0, 0);
+}
+@keyframes hole2-fw-shard {
+  0%   { transform: translate(0, 0)            scale(1.2); opacity: 1; }
+  10%  { transform: translate(calc(var(--dx) * 0.25), calc(var(--dy) * 0.25)) scale(1.1); opacity: 1; }
+  55%  { transform: translate(calc(var(--dx) * 0.92), calc(var(--dy) * 0.92 + 6vh)) scale(0.9); opacity: 1; }
+  85%  { transform: translate(var(--dx), calc(var(--dy) + 14vh)) scale(0.6); opacity: 0.6; }
+  100% { transform: translate(var(--dx), calc(var(--dy) + 18vh)) scale(0.3); opacity: 0; }
+}
+
+/* victory caption -- gothic blackletter title + cinzel sub.
+   center-anchored above the arena box. scales in from 0 to 1 with
+   a small overshoot, then floats */
+.hole2-win__caption {
+  position: absolute;
+  left: 50%;
+  top: 28vh;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2vh;
+  text-align: center;
+}
+.hole2-win__title {
+  font-family: var(--font-display);
+  font-size: 9vh;
+  line-height: 1;
+  color: var(--hud-fg);
+  letter-spacing: 0.04em;
+  text-shadow:
+    0 0 0 #000,
+    3px 3px 0 #000,
+    0 0 22px rgba(255, 230, 180, 0.55),
+    0 0 38px rgba(255, 60, 60, 0.32);
+  transform: scale(0);
+  opacity: 0;
+  animation: hole2-win-title-in 900ms cubic-bezier(0.2, 0.85, 0.32, 1.05) 320ms both;
+}
+.hole2-win__sub {
+  font-family: var(--font-spell);
+  font-size: 2.0vh;
+  letter-spacing: 0.32em;
+  color: rgba(255, 230, 180, 0.78);
+  text-shadow: 0 0 12px rgba(255, 60, 60, 0.4);
+  transform: scale(0);
+  opacity: 0;
+  animation: hole2-win-title-in 760ms cubic-bezier(0.2, 0.85, 0.32, 1.05) 720ms both;
+}
+.hole2-win__epitaph {
+  margin-top: 2vh;
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 1.8vh;
+  color: rgba(255, 230, 180, 0.62);
+  max-width: 60vh;
+  line-height: 1.45;
+  opacity: 0;
+  animation: hole2-win-fade-in 1200ms ease-out 1400ms both;
+}
+@keyframes hole2-win-title-in {
+  0%   { transform: scale(0);    opacity: 0; }
+  70%  { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+@keyframes hole2-win-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole2-firework,
+  .hole2-firework__flash,
+  .hole2-firework__shard {
+    animation-duration: 1ms;
+    animation-iteration-count: 1;
+  }
+}
+
+/* FINIS highlight -- only the word "FINIS" inside the sub-caption gets
+   wrapped in this span so the red ellipse pseudo-element can anchor
+   off it. base state (caption phase) is a plain inline-block; the
+   --flashing variant turns on the ::after ellipse + a soft red text
+   shadow that pulses with it */
+.hole2-win__finis {
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+}
+.hole2-win__finis--flashing {
+  animation: hole2-win-finis-text 320ms steps(2, end) infinite;
+}
+.hole2-win__finis--flashing::after {
+  content: '';
+  position: absolute;
+  left:   -0.55em;
+  right:  -0.55em;
+  top:    -0.35em;
+  bottom: -0.35em;
+  border: 3px solid #ff2a2a;
+  border-radius: 50%;
+  box-shadow:
+    0 0 14px rgba(255, 30, 30, 0.7),
+    inset 0 0 10px rgba(255, 30, 30, 0.35);
+  pointer-events: none;
+  animation: hole2-win-finis-ring 320ms steps(2, end) infinite;
+}
+@keyframes hole2-win-finis-ring {
+  0%   { opacity: 0; transform: scale(0.92); }
+  50%  { opacity: 1; transform: scale(1.0);  }
+  100% { opacity: 0; transform: scale(0.92); }
+}
+@keyframes hole2-win-finis-text {
+  0%   { text-shadow: 0 0 0 #000, 3px 3px 0 #000; color: var(--hud-fg); }
+  50%  { text-shadow: 0 0 18px rgba(255, 30, 30, 0.95),
+                       3px 3px 0 #000;
+         color: #ffd6d6; }
+  100% { text-shadow: 0 0 0 #000, 3px 3px 0 #000; color: var(--hud-fg); }
+}
+
+/* finis-hit sting -- yt iframe lives at this host. invisible by
+   design (the audio is the point, the ellipse is the visual). a 1x1
+   off-screen rect since some browsers refuse audio playback from a
+   zero-dimensioned or display:none iframe */
+.hole2-win__finis-host {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* popup video -- visible iframe covering the caption area. sized so
+   the 16:9 video sits comfortably inside the arena. z-index above
+   the dim + fireworks so they appear "behind" the popup, with a
+   border + drop-shadow framing it like a pop-up dialog */
+.hole2-win__popup {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 78vw;
+  height: 43.875vw;          /* 78vw * 9/16 -- 16:9 aspect */
+  max-width: 120vh;          /* don't let it grow taller than fits the arena */
+  max-height: 67.5vh;        /* 120vh * 9/16 */
+  border: none;
+  background: #000;
+  z-index: 240;
+  box-shadow:
+    0 0 0 2px rgba(244, 236, 214, 0.9),
+    0 0 80px rgba(0, 0, 0, 0.85),
+    0 0 120px rgba(255, 60, 60, 0.25);
+  /* slight scale-in so the popup feels like it "opens" rather than
+     hard-cutting in. opacity fades alongside */
+  animation: hole2-win-popup-in 360ms cubic-bezier(0.18, 0.7, 0.32, 1.0) both;
+}
+@keyframes hole2-win-popup-in {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.86); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1);    }
+}
+
+/* DARKNESS RISES -- loss overlay. structural parallel to .hole2-win:
+   absolute fill, z 200, fade-in via data-on. inverted theme: the
+   light bursts get replaced by dark pixel columns rising from the
+   arena floor, plus a slow black floor-fill that lifts up behind
+   them. caption uses the gothic stack in red + bone */
+.hole2-lose {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 200;
+  opacity: 0;
+  transition: opacity 700ms ease-out;
+  overflow: hidden;
+}
+.hole2-lose[data-on="true"] {
+  opacity: 1;
+}
+
+/* radial dim -- darker than the victory wash, weighted toward the
+   bottom so the arena floor reads as the origin of the rising dark.
+   sits behind the columns */
+.hole2-lose__dim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 90% 75% at 50% 70%,
+    rgba(0, 0, 0, 0.62) 0%,
+    rgba(0, 0, 0, 0.86) 55%,
+    rgba(0, 0, 0, 0.96) 100%
+  );
+  animation: hole2-lose-dim-in 1400ms ease-out both;
+}
+@keyframes hole2-lose-dim-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* columns layer -- holds the rising pixel shadow columns. each
+   column lives inside, anchored at the arena floor */
+.hole2-lose__columns {
+  position: absolute;
+  inset: 0;
+}
+.hole2-lose__column {
+  position: absolute;
+  left: var(--col-x, 50%);
+  bottom: 0;
+  width: var(--col-width, 3vh);
+  height: 0;
+  /* deep red base, edged in black. box-shadow gives a faint glow that
+     reads as "the shadow is hot, not dead" */
+  background:
+    linear-gradient(
+      to top,
+      hsl(var(--col-hue, 354), 78%, 6%) 0%,
+      hsl(var(--col-hue, 354), 72%, 11%) 35%,
+      hsl(var(--col-hue, 354), 56%, 7%) 75%,
+      rgba(0, 0, 0, 0.0) 100%
+    );
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.85),
+    0 -6px 18px hsla(var(--col-hue, 354), 75%, 24%, 0.45);
+  image-rendering: pixelated;
+  /* rise -- step easing gives a chunked pixel-column climb instead of
+     smooth growth. infinite hold via fill-mode forwards so the column
+     stays at full height after rising */
+  animation:
+    hole2-lose-rise var(--col-rise, 1400ms) steps(14, end)
+      var(--col-delay, 0ms) forwards;
+  opacity: 0;
+}
+@keyframes hole2-lose-rise {
+  0%   { height: 0;    opacity: 0; }
+  10%  { height: 4vh;  opacity: 1; }
+  100% { height: 92vh; opacity: 1; }
+}
+
+/* second-wave floor -- a slow black fill that lifts from the bottom
+   once the columns have established. data-on toggle starts the
+   transition. ends covering the lower 80vh so the caption (top 28vh)
+   stays clear */
+.hole2-lose__floor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 0;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.98) 0%,
+    rgba(0, 0, 0, 0.92) 55%,
+    rgba(0, 0, 0, 0.0) 100%
+  );
+  transition: height 2200ms cubic-bezier(0.5, 0.0, 0.7, 1.0);
+  pointer-events: none;
+}
+.hole2-lose__floor[data-on="true"] {
+  height: 80vh;
+}
+
+/* caption -- same gothic stack as the win screen, palette flipped
+   into cold red. center-anchored, with a slow fade-in so the words
+   land after the columns have begun rising */
+.hole2-lose__caption {
+  position: absolute;
+  left: 50%;
+  top: 28vh;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2vh;
+  text-align: center;
+}
+.hole2-lose__title {
+  font-family: var(--font-display);
+  font-size: 9vh;
+  line-height: 1;
+  color: #f4ecd6;
+  letter-spacing: 0.04em;
+  text-shadow:
+    0 0 0 #000,
+    3px 3px 0 #000,
+    0 0 22px rgba(255, 60, 60, 0.55),
+    0 0 38px rgba(120, 10, 20, 0.55);
+  transform: scale(0);
+  opacity: 0;
+  animation: hole2-lose-title-in 1100ms cubic-bezier(0.18, 0.7, 0.32, 1.0) 520ms both;
+}
+.hole2-lose__sub {
+  font-family: var(--font-spell);
+  font-size: 2.0vh;
+  letter-spacing: 0.32em;
+  color: rgba(255, 200, 200, 0.78);
+  text-shadow: 0 0 12px rgba(255, 40, 40, 0.45);
+  transform: scale(0);
+  opacity: 0;
+  animation: hole2-lose-title-in 900ms cubic-bezier(0.18, 0.7, 0.32, 1.0) 980ms both;
+}
+.hole2-lose__epitaph {
+  margin-top: 2vh;
+  font-family: var(--font-body);
+  font-style: italic;
+  font-size: 1.8vh;
+  color: rgba(255, 220, 220, 0.62);
+  max-width: 60vh;
+  line-height: 1.45;
+  opacity: 0;
+  animation: hole2-lose-fade-in 1400ms ease-out 1700ms both;
+}
+@keyframes hole2-lose-title-in {
+  0%   { transform: scale(0);    opacity: 0; }
+  68%  { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+@keyframes hole2-lose-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole2-lose__dim,
+  .hole2-lose__column,
+  .hole2-lose__floor {
+    animation-duration: 1ms;
+    transition-duration: 1ms;
+    animation-iteration-count: 1;
+  }
+}
+
+/* once the engine has mounted (data-begun on the stage), hide the
+   React-rendered scaffolding HUD -- the engine writes the live HUD
+   into its own .hud element under .hole2-game. without this we'd
+   stack two HUDs in roughly the same screen region */
+.hole2-stage[data-begun="true"] .hole2-hud {
+  display: none;
+}
+
+/* once BEGIN flips data-begun, the engine's .boss takes over the
+   sprite visual at its arena position. the .hole2-sprite from the
+   rise-from-eclipse transition is still mounted from
+   TransitionAndArena -- hide it entirely. !important + animation:none
+   are load-bearing: the rise/settle/bob animations had forwards mode
+   and locked opacity at 1, beating a regular opacity:0 rule. setting
+   display:none on the children kills the visual, while keeping the
+   parent in the dom so the data-phase animations don't get re-armed
+   if a hash flip ever toggles back */
+.hole2-stage[data-begun="true"] .hole2-sprite,
+.hole2-stage[data-begun="true"] .hole2-sprite__trail {
+  animation: none !important;
+  opacity: 0 !important;
+  visibility: hidden;
+}
+
+/* ============================================================
+   hole2 pause overlay -- mounts when the engine pauses on Escape
+   or tab-out. sits above the game DOM, below the win overlay so
+   victory takes precedence if both somehow trigger together
+   ============================================================ */
+.hole2-pause {
+  position: absolute;
+  inset: 0;
+  /* above .phase-transition (z 100) so a pause triggered mid-transition
+     still surfaces the FERMATA card on top, instead of getting buried
+     under the dark wash */
+  z-index: 150;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  animation: hole2-pause-in 220ms ease-out forwards;
+}
+@keyframes hole2-pause-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.hole2-pause__dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 4, 10, 0.72);
+}
+.hole2-pause__panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2vh;
+  padding: 4vh 6vh;
+  text-align: center;
+  /* gothic frame, lighter than the dialogue boxes -- pause is a
+     procedural moment, not part of the diegesis */
+  background: rgba(8, 6, 10, 0.92);
+  border: 2px solid rgba(255, 230, 180, 0.7);
+  box-shadow:
+    0 0 0 1px #000,
+    0 0 24px rgba(255, 60, 60, 0.22),
+    inset 0 0 12px rgba(0, 0, 0, 0.6);
+}
+.hole2-pause__title {
+  font-family: var(--font-display);
+  font-size: 7vh;
+  line-height: 1;
+  color: var(--hud-fg);
+  letter-spacing: 0.04em;
+  text-shadow:
+    0 0 0 #000,
+    2px 2px 0 #000,
+    0 0 18px rgba(255, 230, 180, 0.45);
+}
+.hole2-pause__sub {
+  font-family: var(--font-spell);
+  font-size: 1.8vh;
+  letter-spacing: 0.32em;
+  color: rgba(255, 230, 180, 0.6);
+  text-shadow: 0 0 10px rgba(255, 60, 60, 0.3);
+}
+.hole2-pause__hint {
+  margin-top: 1.4vh;
+  font-family: var(--font-body);
+  font-size: 1.5vh;
+  color: rgba(255, 230, 180, 0.78);
+  letter-spacing: 0.06em;
+}
+.hole2-pause__hint kbd {
+  display: inline-block;
+  margin: 0 0.3vh;
+  padding: 0 0.6vh;
+  border: 1px solid rgba(255, 230, 180, 0.55);
+  border-radius: 2px;
+  background: rgba(255, 230, 180, 0.1);
+  font-family: var(--font-body);
+  font-size: 1.4vh;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole2-pause { animation-duration: 1ms; }
+}
+
+/* ============================================================
+   hole2 admin panel -- visual control surface mounted once the
+   player types "lehrer" in the arena. floats top-right with a
+   gothic-victorian register matching the HUD; small enough not
+   to crowd the play area + tagged "ADMIN" so it never gets
+   confused with regular HUD pieces
+   ============================================================ */
+.hole2-admin {
+  position: absolute;
+  top: 2vh;
+  left: 2vh;
+  /* above .phase-transition (z 100) so admin clicks during a title-card
+     stay reachable in the top-left corner */
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 1.4vh;
+  padding: 1.6vh 1.8vh;
+  background: rgba(8, 6, 10, 0.92);
+  border: 2px solid rgba(255, 230, 180, 0.65);
+  box-shadow:
+    0 0 0 1px #000,
+    0 0 18px rgba(180, 30, 30, 0.22),
+    inset 0 0 10px rgba(0, 0, 0, 0.7);
+  color: var(--hud-fg);
+  font-family: var(--font-body);
+  /* pointer-events on -- buttons need to be clickable */
+  pointer-events: auto;
+  /* enter animation matches the dialogue-box float-in feel without the
+     same long duration; admin panel is a procedural moment */
+  animation: hole2-admin-in 320ms cubic-bezier(0.2, 0.85, 0.32, 1.05) both;
+}
+@keyframes hole2-admin-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.hole2-admin__title {
+  font-family: var(--font-display);
+  font-size: 2.2vh;
+  letter-spacing: 0.05em;
+  color: var(--hud-fg);
+  text-align: center;
+  text-shadow: 0 0 0 #000, 1px 1px 0 #000, 0 0 10px rgba(255, 60, 60, 0.4);
+  border-bottom: 1px dashed rgba(255, 230, 180, 0.4);
+  padding-bottom: 0.8vh;
+  margin-bottom: 0.2vh;
+}
+
+.hole2-admin__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6vh;
+}
+.hole2-admin__label {
+  font-family: var(--font-spell);
+  font-weight: 600;
+  font-size: 1.3vh;
+  letter-spacing: 0.18em;
+  color: rgba(255, 230, 180, 0.78);
+  text-shadow: 0 0 0 #000, 1px 1px 0 #000;
+}
+
+.hole2-admin__grid {
+  display: grid;
+  gap: 0.4vh;
+}
+.hole2-admin__grid--phase  { grid-template-columns: repeat(4, 1fr); }
+.hole2-admin__grid--output { grid-template-columns: repeat(5, 1fr); }
+.hole2-admin__toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4vh;
+}
+
+.hole2-admin__btn {
+  font-family: var(--font-body);
+  font-size: 1.5vh;
+  line-height: 1;
+  min-width: 3.2vh;
+  padding: 0.7vh 0.9vh;
+  background: rgba(20, 14, 10, 0.85);
+  color: var(--hud-fg);
+  border: 1px solid rgba(255, 230, 180, 0.42);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  /* tabular nums + light shadow so digit toggles feel chiseled like
+     the hud timer */
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 0 #000, 1px 1px 0 #000;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+.hole2-admin__btn:hover,
+.hole2-admin__btn:focus-visible {
+  background: rgba(60, 30, 18, 0.85);
+  border-color: rgba(255, 230, 180, 0.85);
+  outline: none;
+}
+.hole2-admin__btn[data-active="true"] {
+  background: var(--hud-fg);
+  color: #0a0608;
+  border-color: var(--hud-fg);
+  text-shadow: none;
+}
+
+/* globe-lvl buttons carry the GLOBE LVL pip colors when active so the
+   panel matches the HUD ladder (green/blue/purple/yellow/white) */
+.hole2-admin__btn--globe[data-tier="1"][data-active="true"] { background: #2ee85a; border-color: #2ee85a; }
+.hole2-admin__btn--globe[data-tier="2"][data-active="true"] { background: #4aa3ff; border-color: #4aa3ff; }
+.hole2-admin__btn--globe[data-tier="3"][data-active="true"] { background: #b46cff; border-color: #b46cff; }
+.hole2-admin__btn--globe[data-tier="4"][data-active="true"] { background: #ffd84e; border-color: #ffd84e; color: #0a0608; }
+.hole2-admin__btn--globe[data-tier="5"][data-active="true"] { background: #ffffff; border-color: #ffffff; }
+
+.hole2-admin__btn--toggle {
+  text-align: left;
+  letter-spacing: 0.08em;
+}
+.hole2-admin__btn--toggle[data-active="true"] {
+  /* "danger" red for the ON state so it's clear damage is live */
+  background: #a8322a;
+  border-color: #e85a4a;
+  color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hole2-admin { animation-duration: 1ms; }
+}
+
+/* ============================================================
+   .phase-transition unscoped backup -- guarantees the title-card
+   overlay paints even if the .hole2-game-scoped nested rules don't
+   match (e.g. accidental scope change, dom restructure). !important
+   wins against any earlier inherited overrides. only the layout +
+   visibility-critical declarations are duplicated -- font + color
+   come from var(--font-spell) / var(--hud-fg) which cascade from
+   .hole2-game (still the parent). data-show=true is the trigger
+   the engine writes in showTransition; the opacity transition gives
+   the fade-in / fade-out feel
+   ============================================================ */
+.phase-transition {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  background: rgba(4, 4, 10, 0.86) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 3vh !important;
+  /* z 100 -- below admin (120), pause (150), and win (200) so those
+     overlays take priority when active. above .arena (6),
+     .hole2-transition (5), .hole2-player (8) so the title-card sits
+     on top of everything in the gameplay layer */
+  z-index: 100 !important;
+  opacity: 0;
+  pointer-events: none !important;
+  transition: opacity 380ms ease-out !important;
+}
+.phase-transition[data-show="true"] {
+  opacity: 1 !important;
+}
+
+/* unscoped backups for the .phase-transition CHILDREN (hex / caption /
+   sub). without these the animations only fire via the .hole2-game-
+   scoped selector; if the scope doesn't match for any reason the
+   children stay at the animation's backwards-fill state (scale 0 /
+   opacity 0) forever and the user sees only the dark wash background.
+   the .hole2-game scope is the canonical path -- this is belt-and-
+   suspenders for the same reason the parent gets the unscoped backup */
+
+/* hex container -- 26vh square, grid-centers the svg inside */
+.phase-transition__hex {
+  width: 26vh !important;
+  height: 26vh !important;
+  display: grid !important;
+  place-items: center !important;
+  transform-origin: center !important;
+}
+/* svg fills the hex container */
+.phase-transition__hex-star {
+  width: 100% !important;
+  height: 100% !important;
+  display: block !important;
+  transform-origin: center !important;
+  filter: drop-shadow(0 0 6px rgba(255, 60, 60, 0.55)) !important;
+}
+/* polygon stroke -- explicit cream fallback in case var(--hud-fg)
+   doesn't resolve. fill is the soft red inner glow */
+.phase-transition__hex-star polygon {
+  fill: rgba(140, 30, 30, 0.18) !important;
+  stroke: #f4ecd6 !important;
+  stroke-width: 1.4 !important;
+  stroke-linejoin: miter !important;
+  vector-effect: non-scaling-stroke !important;
+}
+/* caption + sub -- explicit font fallbacks so text appears even if
+   the var(--font-spell) / var(--font-body) cascade fails */
+.phase-transition__caption {
+  font-family: 'Cinzel', 'Cormorant Garamond', 'Times New Roman', serif !important;
+  font-weight: 700 !important;
+  font-size: 4.2vh !important;
+  letter-spacing: 0.16em !important;
+  color: #f4ecd6 !important;
+  text-align: center !important;
+  line-height: 1.05 !important;
+  transform-origin: center !important;
+  text-shadow:
+    0 0 0 #000,
+    2px 2px 0 #000,
+    0 0 18px rgba(255, 60, 60, 0.35) !important;
+}
+.phase-transition__sub {
+  font-family: 'IM Fell English', 'EB Garamond', 'Cormorant Garamond', Georgia, serif !important;
+  font-size: 1.6vh !important;
+  letter-spacing: 0.32em !important;
+  color: rgba(255, 230, 180, 0.55) !important;
+  margin-top: -1vh !important;
+  transform-origin: center !important;
+}
+/* the testbed's scale-in choreography (hexagram-spawn 720ms +
+   hexagram-spin 4.2s + title-text-spawn 600ms with 120ms/340ms
+   delays) lives in the .hole2-game-scoped rules above. children now
+   reliably appear because the engine destroy() no longer wipes
+   #phase-transition innerHTML -- that wipe was what kept the JSX
+   children from existing on remount. with that fixed, the spawn-grow
+   animations land normally and the children scale in from the center.
+   no !important visibility override needed anymore */

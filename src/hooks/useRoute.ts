@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 
-export type Page = 'main' | 'projects';
+export type Page = 'main' | 'projects' | 'hole' | 'hole2';
 
 export type Route = {
   page: Page;
@@ -15,9 +15,14 @@ export type Route = {
 //   '#whoami' / '#skills'  -> main + scroll to anchor
 //   '#projects'            -> projects page
 //   '#projects/<slug>'     -> projects page + scroll to card
+//   '#hole'                -> hole page (sisyphus-victory destination)
+//   '#hole2'               -> hole2 -- white void after the fracture YES
 export function parseRoute(hash: string): Route {
   const h = hash.replace(/^#/, '').trim();
   if (h === '' ) return { page: 'main' };
+
+  if (h === 'hole') return { page: 'hole' };
+  if (h === 'hole2') return { page: 'hole2' };
 
   const m = h.match(/^projects(?:\/(.+))?$/);
   if (m) {
@@ -30,6 +35,8 @@ export function routeToHash(route: Route): string {
   if (route.page === 'projects') {
     return route.slug ? `#projects/${route.slug}` : '#projects';
   }
+  if (route.page === 'hole') return '#hole';
+  if (route.page === 'hole2') return '#hole2';
   return route.anchor ? `#${route.anchor}` : '';
 }
 

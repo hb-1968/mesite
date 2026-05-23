@@ -25,6 +25,14 @@ const PROJ_SECTIONS: { id: string; label: string }[] = [
 ];
 
 export function StatusBar({ theme, onToggleTheme, page }: Props) {
+  // NB: no early returns above the hooks -- bailing out before
+  // useState/useEffect changes hook count between renders and React
+  // throws "rendered fewer hooks than expected" the moment you nav
+  // away from hole2. the page === 'hole2' / isHole branches sit
+  // below, after all hooks have been called.
+  const isHole = page === 'hole';
+  const isHole2 = page === 'hole2';
+  // hole route uses a different layout entirely -- no sections menu
   const sections = page === 'main' ? MAIN_SECTIONS : PROJ_SECTIONS;
   const [active, setActive] = useState(sections[0]?.label ?? '~');
   const [dropOpen, setDropOpen] = useState(false);
@@ -34,6 +42,8 @@ export function StatusBar({ theme, onToggleTheme, page }: Props) {
   const [compressed, setCompressed] = useState(false);
 
   useEffect(() => {
+    // hole + hole2 have no anchored sections to track
+    if (isHole || isHole2) return;
     const els = sections
       .map(({ id, label }) => ({ el: document.getElementById(id), label }))
       .filter((x): x is { el: HTMLElement; label: string } => x.el !== null);
@@ -53,7 +63,7 @@ export function StatusBar({ theme, onToggleTheme, page }: Props) {
 
     els.forEach(({ el }) => io.observe(el));
     return () => io.disconnect();
-  }, [page, sections]);
+  }, [page, sections, isHole, isHole2]);
 
   // 80px dead zone so a tiny twitch doesn't flip the bar to compact
   useEffect(() => {
@@ -63,8 +73,77 @@ export function StatusBar({ theme, onToggleTheme, page }: Props) {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
+  // hole2 = nothing. bail out only AFTER every hook above has run
+  // so the hook count stays stable across page transitions
+  if (isHole2) return null;
+
   const glyph = theme === 'dark' ? '◐' : '◑';
   const targetLabel = theme === 'dark' ? 'light' : 'dark';
+
+  // hole route -- nothing but the exit prompt + theme toggle. by the
+  // time someone's down here they've committed to the bit. href="#"
+  // routes through NavTransition back to the main page.
+  if (isHole) {
+    return (
+      <header
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 5,
+          background: 'color-mix(in srgb, var(--bg-deep) 88%, transparent)',
+          backdropFilter: 'blur(6px)',
+          WebkitBackdropFilter: 'blur(6px)',
+          borderBottom: '1px solid var(--fg-faint)',
+          fontSize: compressed ? 'var(--fs-sm)' : 'var(--fs-md)',
+          transition: 'font-size 220ms ease'
+        }}
+        aria-label="status bar"
+      >
+        <div
+          className="container"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr auto 1fr',
+            alignItems: 'center',
+            height: compressed ? 40 : 68,
+            gap: 'var(--sp-4)',
+            color: 'var(--fg-muted)',
+            transition: 'height 220ms ease'
+          }}
+        >
+          {/* left cell: empty -- pushes the prompt to center */}
+          <span />
+
+          <a
+            href="#"
+            className="hole-end-link"
+            aria-label="End yourself and return home"
+          >
+            END YOURSELF
+          </a>
+
+          <span style={{ justifySelf: 'end' }}>
+            <button
+              type="button"
+              onClick={onToggleTheme}
+              aria-label={`Switch to ${targetLabel} mode (current: ${theme})`}
+              title={`Switch to ${targetLabel} mode (t)`}
+              style={{
+                padding: '2px 8px',
+                fontSize: 'var(--fs-xs)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6
+              }}
+            >
+              <span aria-hidden="true" style={{ fontSize: '0.9em' }}>{glyph}</span>
+              {targetLabel}
+            </button>
+          </span>
+        </div>
+      </header>
+    );
+  }
 
   return (
     <header

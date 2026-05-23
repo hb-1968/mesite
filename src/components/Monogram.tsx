@@ -21,7 +21,8 @@
 //      release to let it slide back. there's a continuous
 //      (height-scaled) chance per frame for the ball to slip and
 //      plunge to the bottom. esc exits.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Wordmark, composeWordmark } from './Wordmark';
 
 // ~70 cells/sec. wordmark has 209 cells -> ~3.6s for the whole intro
@@ -93,13 +94,14 @@ const HILL_CELL_DURATION_MS = HILL_CELL_DELAY_MS * 2;
 
 // sprite is an SVG of a person pushing a ball. ball CENTER lives at
 // (SPRITE_BALL_X, SPRITE_BALL_Y) inside the sprite's viewBox so we
-// can pin the sprite's position by the ball, not the corner.
-// 2x bigger than the previous pass for visibility on the dark bg
-const SPRITE_W = 28;
-const SPRITE_H = 20;
-const SPRITE_BALL_X = 20;
-const SPRITE_BALL_Y = 8;
-const BALL_RADIUS = 6;
+// can pin the sprite's position by the ball, not the corner. ball
+// is now the dominant element -- diameter 20, ~bigger than the
+// person figure on its left
+const SPRITE_W = 32;
+const SPRITE_H = 24;
+const SPRITE_BALL_X = 22;
+const SPRITE_BALL_Y = 12;
+const BALL_RADIUS = 10;
 
 // physics rates -- per second. dt is applied at frame time so the
 // game runs at the same pace regardless of monitor refresh
@@ -107,13 +109,25 @@ const CLIMB_RATE = 0.18;      // t units / sec under full grip
 const GRIP_DECAY = 0.13;      // grip lost / sec while holding
 const GRIP_RECOVER = 0.55;    // grip regained / sec when released
 const GRAVITY = 0.32;         // t units / sec sliding back
-// slip prob per second = SLIP_K * t^2. at t=0.3 -> ~0.05/s. at t=0.9
-// -> ~0.49/s -- ie a ~2s mean time to slip near the top
-const SLIP_K = 0.6;
+// slip prob per second = SLIP_K * t^3. cube (vs square) concentrates
+// the failure window near the top -- 0.9 is occasionally reachable
+// but the last 10% stays punishing. at t=0.5 -> ~0.06/s. at t=0.9
+// -> ~0.36/s. at t=1.0 -> 0.5/s
+const SLIP_K = 0.5;
 // when slip fires, ball rolls under acceleration -- gravity-style
 // pickup of speed -- rather than teleporting to t=0. accel is in
 // t-units/sec^2. at t=0.5 the slide takes ~0.4s; at t=0.9 ~0.55s
 const SLIP_ACCEL = 6;
+
+// mercy cap. hold w for this long without releasing and the ball
+// snaps to the top -- sisyphus pays off only if you commit. 7 min
+const HARD_SUCCESS_HOLD_MS = 7 * 60 * 1000;
+// after winning, pause this long before the two choice buttons
+// appear above the sprite -- gives the moment room to land
+const CHOICE_DELAY_MS = 3000;
+// if the user doesn't pick within this window after the buttons
+// reveal, default to `return to your beginnings`
+const CHOICE_TIMEOUT_MS = 15000;
 
 // parabolic-ish slope: rises gently at first, steepens to the right.
 // exponent > 1 = harder near the top, which is the point
@@ -155,8 +169,14 @@ function smoothSurfaceY(xCellFloat: number): number {
 
 // --- bypass keyboard --------------------------------------------
 
-// typing this anywhere while phase=idle && !rewarded skips the maze
+// typing this while phase=idle && !rewarded skips the maze
 const BYPASS_CODE = 'uninet';
+// personal shortcut -- typing this from the hero (phase=idle) routes
+// straight to #hole regardless of game state
+const HOLE_CODE = 'maestrul';
+// buffer holds the last N letters where N = the longer code, so
+// either trigger can land via endsWith
+const KEY_BUFFER_LEN = Math.max(BYPASS_CODE.length, HOLE_CODE.length);
 
 // width of the `hunter` half of the small wordmark at cellSize=3.
 // h+u+n+t+e+r = 6 letters * 5 cols + (2+2+1+1+2) joiner cols = 38
@@ -184,7 +204,8 @@ type Phase =
   | 'maze-armed'
   | 'maze-active'
   | 'maze-won'
-  | 'sisyphus-active';
+  | 'sisyphus-active'
+  | 'sisyphus-won';
 
 // --- component --------------------------------------------------
 
@@ -238,6 +259,12 @@ export function Monogram() {
     active: false,
     velocity: 0
   });
+  // continuous-hold tracking for the 7-min mercy cap. set on the
+  // leading edge of a W keydown, cleared on keyup. when the elapsed
+  // crosses HARD_SUCCESS_HOLD_MS, succeededRef flips and the player
+  // snaps to t=1 regardless of slip pressure
+  const continuousHoldStartRef = useRef<number | null>(null);
+  const succeededRef = useRef(false);
   // playKey for hill snake-paint -- bump on each sisyphus entry so
   // the paint replays from frame 0
   const [hillKey, setHillKey] = useState(0);
@@ -250,6 +277,9 @@ export function Monogram() {
   // ambient music: flips true after MUSIC_DELAY_MS in sisyphus, gets
   // un-flipped (and the iframe unmounts) the moment we leave
   const [musicPlaying, setMusicPlaying] = useState(false);
+
+  // choice buttons reveal CHOICE_DELAY_MS after entering sisyphus-won
+  const [showChoice, setShowChoice] = useState(false);
 
   function clearArmTimer() {
     if (armTimer.current != null) {
@@ -297,6 +327,8 @@ export function Monogram() {
     holdingRef.current = false;
     slipRef.current.active = false;
     slipRef.current.velocity = 0;
+    continuousHoldStartRef.current = null;
+    succeededRef.current = false;
     setHillKey(k => k + 1);
     setPhase('sisyphus-active');
   }
@@ -394,13 +426,19 @@ export function Monogram() {
       const k = e.key.toLowerCase();
       if (k === 'w' || k === 'arrowup' || k === ' ') {
         e.preventDefault();
-        holdingRef.current = true;
+        // only stamp the start on the leading edge -- key repeat
+        // fires onDown every ~30ms, we don't want to keep resetting
+        if (!holdingRef.current) {
+          holdingRef.current = true;
+          continuousHoldStartRef.current = performance.now();
+        }
       }
     }
     function onUp(e: KeyboardEvent) {
       const k = e.key.toLowerCase();
       if (k === 'w' || k === 'arrowup' || k === ' ') {
         holdingRef.current = false;
+        continuousHoldStartRef.current = null;
       }
     }
     window.addEventListener('keydown', onDown);
@@ -409,25 +447,37 @@ export function Monogram() {
       window.removeEventListener('keydown', onDown);
       window.removeEventListener('keyup', onUp);
       holdingRef.current = false;
+      continuousHoldStartRef.current = null;
     };
   }, [phase]);
 
   // --- bypass keyboard ---
-  // listen while we're idle and not yet rewarded. tracks last N keys,
-  // unlocks the reward button if the buffer ends in BYPASS_CODE.
+  // listen while we're idle. tracks last N keys; two recognized
+  // codes:
+  //   `uninet`   -> skip the maze (only fires if not already rewarded)
+  //   `maestrul` -> hidden personal shortcut, routes straight to /hole
   // each letter keypress also bumps flashKey so the `hunter` overlay
   // pulses -- cheap visual cue that the keyboard is hot
   useEffect(() => {
-    if (phase !== 'idle' || rewarded) return;
+    if (phase !== 'idle') return;
     function onKey(e: KeyboardEvent) {
       const k = e.key;
       // only ascii letters count. avoids polluting the buffer with
       // arrow keys, shift, etc when user is just navigating
       if (k.length !== 1 || !/[a-zA-Z]/.test(k)) return;
       const ch = k.toLowerCase();
-      bufferRef.current = (bufferRef.current + ch).slice(-BYPASS_CODE.length);
+      bufferRef.current = (bufferRef.current + ch).slice(-KEY_BUFFER_LEN);
       setFlashKey(fk => fk + 1);
-      if (bufferRef.current === BYPASS_CODE) {
+      // maestrul -- personal shortcut to the hole, fires regardless
+      // of rewarded state. endsWith because the buffer may carry
+      // unrelated trailing chars from prior keystrokes
+      if (bufferRef.current.endsWith(HOLE_CODE)) {
+        bufferRef.current = '';
+        window.location.hash = 'hole';
+        return;
+      }
+      // uninet -- only useful before the maze is solved
+      if (!rewarded && bufferRef.current.endsWith(BYPASS_CODE)) {
         bufferRef.current = '';
         setRewarded(true);
       }
@@ -445,6 +495,27 @@ export function Monogram() {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       let t = ballTRef.current;
+
+      // 7-min mercy cap: if W has been held unbroken for the full
+      // window, snap to the top and transition to the win celebration
+      if (
+        holdingRef.current &&
+        continuousHoldStartRef.current != null &&
+        !succeededRef.current &&
+        now - continuousHoldStartRef.current >= HARD_SUCCESS_HOLD_MS
+      ) {
+        succeededRef.current = true;
+        t = 1;
+        slipRef.current.active = false;
+        slipRef.current.velocity = 0;
+        ballTRef.current = t;
+        setBallT(t);
+        // re-fire hill paint as a victory beat, then advance phase --
+        // the next render cleans up this loop
+        setHillKey(k => k + 1);
+        setPhase('sisyphus-won');
+        return;
+      }
 
       if (slipRef.current.active) {
         // mid-slip: ball accelerates downhill, player input ignored.
@@ -468,11 +539,12 @@ export function Monogram() {
       if (t < 0) t = 0;
       if (t > 1) t = 1;
 
-      // stochastic slip check -- only when not already slipping.
-      // chance per sec scales with t^2 so it's tame at the base and
-      // unforgiving at the top
-      if (!slipRef.current.active) {
-        const slipPerSec = SLIP_K * t * t;
+      // stochastic slip check -- only when not already slipping AND
+      // not in the post-success grace window. chance per sec scales
+      // with t^3 so it's tame on the lower slope and disproportionate
+      // near the top
+      if (!slipRef.current.active && !succeededRef.current) {
+        const slipPerSec = SLIP_K * t * t * t;
         if (Math.random() < slipPerSec * dt) {
           slipRef.current.active = true;
           slipRef.current.velocity = 0;
@@ -488,8 +560,10 @@ export function Monogram() {
   }, [phase]);
 
   // --- music timer ---
-  // 45s into sisyphus, swap in the ambient iframe. cleanup unmounts
-  // it (audio stops) when phase changes away or component unmounts
+  // 45s into sisyphus, swap in the ambient iframe. music cuts the
+  // moment phase leaves sisyphus-active -- including when the 7-min
+  // mercy cap flips us into sisyphus-won. silence is part of the
+  // win payoff
   useEffect(() => {
     if (phase !== 'sisyphus-active') {
       setMusicPlaying(false);
@@ -500,9 +574,51 @@ export function Monogram() {
     }, MUSIC_DELAY_MS);
     return () => {
       window.clearTimeout(t);
-      setMusicPlaying(false);
     };
   }, [phase]);
+
+  // reset everything sisyphus-specific. shared by the two won-state
+  // exit paths (button click + auto-default)
+  function returnToBeginnings() {
+    setPhase('idle');
+    setShowChoice(false);
+    ballTRef.current = 0;
+    setBallT(0);
+    gripRef.current = 1;
+    holdingRef.current = false;
+    slipRef.current.active = false;
+    slipRef.current.velocity = 0;
+    continuousHoldStartRef.current = null;
+    succeededRef.current = false;
+  }
+
+  function seeHowFarTheHoleGoes() {
+    // route change unmounts monogram, which cleans up all the state
+    // we'd otherwise reset by hand
+    window.location.hash = 'hole';
+  }
+
+  // --- sisyphus victory: stage 1 - reveal choice ---
+  // 3s pause so the win lands before any UI demands a decision
+  useEffect(() => {
+    if (phase !== 'sisyphus-won') {
+      setShowChoice(false);
+      return;
+    }
+    const reveal = window.setTimeout(() => {
+      setShowChoice(true);
+    }, CHOICE_DELAY_MS);
+    return () => window.clearTimeout(reveal);
+  }, [phase]);
+
+  // --- sisyphus victory: stage 2 - auto-default ---
+  // 15s after the buttons appear, fall back to "return to beginnings"
+  // if the user hasn't picked
+  useEffect(() => {
+    if (phase !== 'sisyphus-won' || !showChoice) return;
+    const t = window.setTimeout(returnToBeginnings, CHOICE_TIMEOUT_MS);
+    return () => window.clearTimeout(t);
+  }, [phase, showChoice]);
 
   // cleanup any pending timers on unmount
   useEffect(() => () => {
@@ -514,7 +630,10 @@ export function Monogram() {
   }, []);
 
   const showMazeOverlay = phase === 'maze-active' || phase === 'maze-won';
-  const inSisyphus = phase === 'sisyphus-active';
+  // hill + ball stay rendered through the win celebration so the
+  // payoff isn't cut to black at the moment of victory
+  const inSisyphus =
+    phase === 'sisyphus-active' || phase === 'sisyphus-won';
 
   return (
     <div ref={rootRef} className="monogram" aria-label="Hunter Bridges">
@@ -635,10 +754,35 @@ export function Monogram() {
 
       {inSisyphus && (
         <div className="monogram__group monogram__group--enter">
-          <HillStage hillKey={hillKey} ballT={ballT} />
-          <div className="monogram__hint" aria-hidden>
-            hold w · esc
-          </div>
+          <HillStage
+            hillKey={hillKey}
+            ballT={ballT}
+            choice={
+              phase === 'sisyphus-won' && showChoice ? (
+                <div className="monogram__choice">
+                  <button
+                    type="button"
+                    className="monogram__choice-btn"
+                    onClick={returnToBeginnings}
+                  >
+                    return to your beginnings
+                  </button>
+                  <button
+                    type="button"
+                    className="monogram__choice-btn"
+                    onClick={seeHowFarTheHoleGoes}
+                  >
+                    see how far the hole really goes
+                  </button>
+                </div>
+              ) : null
+            }
+          />
+          {phase === 'sisyphus-active' && (
+            <div className="monogram__hint" aria-hidden>
+              hold w · esc
+            </div>
+          )}
         </div>
       )}
 
@@ -662,8 +806,18 @@ export function Monogram() {
 // hill grid + sisyphus sprite. cells snake-paint in via the
 // wordmark--snake keyframe; key on hillKey so each entry replays from
 // frame 0. HILL_PATH is ordered outline-first then fill-below so the
-// silhouette appears first and the body refines under it
-function HillStage({ hillKey, ballT }: { hillKey: number; ballT: number }) {
+// silhouette appears first and the body refines under it.
+// `choice` slot lets the victory buttons live in the same coordinate
+// space as the sprite so they can anchor above it
+function HillStage({
+  hillKey,
+  ballT,
+  choice
+}: {
+  hillKey: number;
+  ballT: number;
+  choice?: ReactNode;
+}) {
   const cells: JSX.Element[] = [];
   HILL_PATH.forEach(([c, r], idx) => {
     const delay = idx * HILL_CELL_DELAY_MS;
@@ -693,6 +847,13 @@ function HillStage({ hillKey, ballT }: { hillKey: number; ballT: number }) {
   const spriteX = ballCenterX - SPRITE_BALL_X;
   const spriteY = ballCenterY - SPRITE_BALL_Y;
 
+  // roll angle (deg) -- derived from horizontal position so the ball
+  // visibly rotates with motion. circumference = 2*pi*r so full
+  // rotation = ~62.8 px of rolling. forward-then-back motion winds
+  // the angle back, mirroring how a real ball would roll
+  const rollAngle =
+    (ballCenterX / (2 * Math.PI * BALL_RADIUS)) * 360;
+
   return (
     <div
       key={hillKey}
@@ -706,16 +867,28 @@ function HillStage({ hillKey, ballT }: { hillKey: number; ballT: number }) {
       aria-hidden
     >
       {cells}
-      <SisyphusSprite x={spriteX} y={spriteY} />
+      <SisyphusSprite x={spriteX} y={spriteY} rollAngle={rollAngle} />
+      {choice}
     </div>
   );
 }
 
-// pixel-art silhouette: head + body + arms + legs on the left, ball
-// on the right. arms reach forward into the ball. all currentColor so
-// the CSS can theme it. coords are 2x the previous pass so the figure
-// reads at hero scale. crispEdges keeps the circle pixelated
-function SisyphusSprite({ x, y }: { x: number; y: number }) {
+// pixel-art silhouette: person on the left, ball on the right.
+// person rects use currentColor (amber-hi via CSS). the ball is
+// amber-hi outer + a bg-deep half-fill clipped to the ball outline;
+// rotating that fill on rollAngle makes the roll visible -- a
+// uniform amber circle wouldn't show rotation at all
+function SisyphusSprite({
+  x,
+  y,
+  rollAngle
+}: {
+  x: number;
+  y: number;
+  rollAngle: number;
+}) {
+  // unique id per render so the clipPath doesn't collide across SVGs
+  const clipId = useId();
   return (
     <svg
       className="monogram__sprite"
@@ -725,22 +898,47 @@ function SisyphusSprite({ x, y }: { x: number; y: number }) {
       style={{ transform: `translate(${x}px, ${y}px)` }}
       aria-hidden
     >
+      <defs>
+        <clipPath id={clipId}>
+          <circle
+            cx={SPRITE_BALL_X}
+            cy={SPRITE_BALL_Y}
+            r={BALL_RADIUS}
+          />
+        </clipPath>
+      </defs>
+
       {/* head */}
-      <rect x={2} y={2} width={4} height={4} fill="currentColor" />
+      <rect x={3} y={3} width={4} height={4} fill="currentColor" />
       {/* shoulder/arm reaching forward into the ball */}
-      <rect x={4} y={6} width={10} height={2} fill="currentColor" />
+      <rect x={5} y={8} width={9} height={2} fill="currentColor" />
       {/* torso */}
-      <rect x={2} y={8} width={4} height={4} fill="currentColor" />
+      <rect x={3} y={10} width={4} height={4} fill="currentColor" />
       {/* legs splayed -- back leg planted further down the slope */}
-      <rect x={2} y={12} width={2} height={6} fill="currentColor" />
-      <rect x={6} y={12} width={2} height={6} fill="currentColor" />
-      {/* ball */}
+      <rect x={3} y={14} width={2} height={6} fill="currentColor" />
+      <rect x={7} y={14} width={2} height={6} fill="currentColor" />
+
+      {/* ball: amber-hi outer disc, then a rotating bg-deep half
+          clipped to the ball outline so the dark side spins visibly
+          as the ball rolls */}
       <circle
         cx={SPRITE_BALL_X}
         cy={SPRITE_BALL_Y}
         r={BALL_RADIUS}
         fill="currentColor"
       />
+      <g
+        clipPath={`url(#${clipId})`}
+        transform={`rotate(${rollAngle} ${SPRITE_BALL_X} ${SPRITE_BALL_Y})`}
+      >
+        <rect
+          x={SPRITE_BALL_X - BALL_RADIUS}
+          y={SPRITE_BALL_Y}
+          width={BALL_RADIUS * 2}
+          height={BALL_RADIUS}
+          fill="var(--bg-deep)"
+        />
+      </g>
     </svg>
   );
 }
