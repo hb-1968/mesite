@@ -122,6 +122,10 @@ const SLIP_ACCEL = 6;
 // mercy cap. hold w for this long without releasing and the ball
 // snaps to the top -- sisyphus pays off only if you commit. 7 min
 const HARD_SUCCESS_HOLD_MS = 7 * 60 * 1000;
+// grace window -- release w and re-press within this and the 7-min
+// counter resumes instead of resetting. finger slips, sneezes, the
+// occasional cursor-grab -- those shouldn't cost the whole run
+const HOLD_GRACE_MS = 5_000;
 // after winning, pause this long before the two choice buttons
 // appear above the sprite -- gives the moment room to land
 const CHOICE_DELAY_MS = 3000;
@@ -260,10 +264,13 @@ export function Monogram() {
     velocity: 0
   });
   // continuous-hold tracking for the 7-min mercy cap. set on the
-  // leading edge of a W keydown, cleared on keyup. when the elapsed
-  // crosses HARD_SUCCESS_HOLD_MS, succeededRef flips and the player
-  // snaps to t=1 regardless of slip pressure
+  // leading edge of a W keydown. on keyup we don't null it -- we
+  // stamp releasedAtRef instead, so the next keydown can decide
+  // whether to resume (gap <= HOLD_GRACE_MS) or restart (gap over).
+  // when elapsed crosses HARD_SUCCESS_HOLD_MS, succeededRef flips
+  // and the player snaps to t=1 regardless of slip pressure
   const continuousHoldStartRef = useRef<number | null>(null);
+  const releasedAtRef = useRef<number | null>(null);
   const succeededRef = useRef(false);
   // playKey for hill snake-paint -- bump on each sisyphus entry so
   // the paint replays from frame 0
@@ -328,6 +335,7 @@ export function Monogram() {
     slipRef.current.active = false;
     slipRef.current.velocity = 0;
     continuousHoldStartRef.current = null;
+    releasedAtRef.current = null;
     succeededRef.current = false;
     setHillKey(k => k + 1);
     setPhase('sisyphus-active');
@@ -426,11 +434,29 @@ export function Monogram() {
       const k = e.key.toLowerCase();
       if (k === 'w' || k === 'arrowup' || k === ' ') {
         e.preventDefault();
-        // only stamp the start on the leading edge -- key repeat
-        // fires onDown every ~30ms, we don't want to keep resetting
+        // only act on the leading edge -- OS key-repeat fires onDown
+        // every ~30ms while held, we don't want to keep resetting
         if (!holdingRef.current) {
+          const now = performance.now();
+          if (
+            continuousHoldStartRef.current != null &&
+            releasedAtRef.current != null
+          ) {
+            const gap = now - releasedAtRef.current;
+            if (gap > HOLD_GRACE_MS) {
+              // grace expired -- fresh 7-min start
+              continuousHoldStartRef.current = now;
+            } else {
+              // within grace -- push the start forward by the gap so
+              // the release effectively doesn't count toward elapsed
+              continuousHoldStartRef.current += gap;
+            }
+          } else {
+            // first press in this sisyphus run
+            continuousHoldStartRef.current = now;
+          }
           holdingRef.current = true;
-          continuousHoldStartRef.current = performance.now();
+          releasedAtRef.current = null;
         }
       }
     }
@@ -438,7 +464,9 @@ export function Monogram() {
       const k = e.key.toLowerCase();
       if (k === 'w' || k === 'arrowup' || k === ' ') {
         holdingRef.current = false;
-        continuousHoldStartRef.current = null;
+        // don't null continuousHoldStartRef -- onDown decides what to
+        // do with it based on how long the release lasted
+        releasedAtRef.current = performance.now();
       }
     }
     window.addEventListener('keydown', onDown);
@@ -448,6 +476,7 @@ export function Monogram() {
       window.removeEventListener('keyup', onUp);
       holdingRef.current = false;
       continuousHoldStartRef.current = null;
+      releasedAtRef.current = null;
     };
   }, [phase]);
 
@@ -589,6 +618,7 @@ export function Monogram() {
     slipRef.current.active = false;
     slipRef.current.velocity = 0;
     continuousHoldStartRef.current = null;
+    releasedAtRef.current = null;
     succeededRef.current = false;
   }
 
