@@ -31,9 +31,14 @@ type Hole2GameProps = {
   // fired once when the final-phase timer expires without victory.
   // page-level mounts the DARKNESS RISES loss overlay
   onDefeat?: () => void;
+  // fired on every engine phase change with the canonical song-time
+  // the phase is meant to begin at. page-level wires this to a seek
+  // on the boss track so an early-drained boss bar or admin/dev
+  // scrub doesn't drift the music out of sync with the fight
+  onPhaseChange?: (newPhase: number, canonicalSongSec: number) => void;
 };
 
-export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat }: Hole2GameProps) {
+export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange }: Hole2GameProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -41,11 +46,11 @@ export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightRese
     // ids are unique on the page (this component only mounts once at a
     // time). returned cleanup cancels the loop + wipes listeners + nukes
     // appended dom nodes so a re-mount starts fresh
-    const stop = startHole2Engine({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat });
+    const stop = startHole2Engine({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange });
     return () => {
       try { stop(); } catch (_) { /* ignore */ }
     };
-  }, [onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat]);
+  }, [onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange]);
 
   return (
     <div ref={rootRef} className="hole2-game">

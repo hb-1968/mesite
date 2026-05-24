@@ -355,6 +355,7 @@ function useHole2Music(videoId: string) {
     pauseVideo?: () => void;
     stopVideo?: () => void;
     seekTo?: (seconds: number, allowSeekAhead: boolean) => void;
+    getCurrentTime?: () => number;
     destroy?: () => void;
   } | null>(null);
   const readyRef = useRef(false);
@@ -465,8 +466,26 @@ function useHole2Music(videoId: string) {
       } catch { /* ignore */ }
     }
   }, []);
+  // seek -- absolute jump to a target time, gated on a minimum delta so
+  // near-no-op seeks (timer-driven phase advances where the music is
+  // already at the target) don't trigger a re-buffer hitch. used by
+  // the phase-sync hook: engine fires PHASE_START_S[n] on every setPhase
+  // and we seek the boss track to that, so an early-drained boss bar
+  // (or admin/dev scrub) warps the music forward to stay aligned with
+  // the fight. drops silently if the player isn't ready yet -- the
+  // boot-time setPhase(1) lands in this case and the music just starts
+  // at 0 naturally
+  const seek = useCallback((seconds: number, opts?: { minDeltaSec?: number }) => {
+    if (!readyRef.current) return;
+    const minDelta = opts?.minDeltaSec ?? 1.0;
+    try {
+      const cur = playerRef.current?.getCurrentTime?.() ?? 0;
+      if (Math.abs(cur - seconds) < minDelta) return;
+      playerRef.current?.seekTo?.(seconds, true);
+    } catch { /* ignore */ }
+  }, []);
 
-  return { play, pause, resume, stop, restart, containerId };
+  return { play, pause, resume, stop, restart, seek, containerId };
 }
 
 // ---- phase machine for the post-submit transition --------------------
@@ -532,6 +551,7 @@ export function Hole2Page() {
     resume: resumeBossMusic,
     stop: stopBossMusic,
     restart: restartBossMusic,
+    seek: seekBossMusic,
     containerId: bossMusicHostId
   } = useHole2Music(BOSS_VIDEO_ID);
 
@@ -572,6 +592,18 @@ export function Hole2Page() {
     setVictory(false);
     setDefeated(false);
   }, [restartBossMusic]);
+
+  // phase-change handler -- engine fires this on every setPhase with
+  // the canonical song-time (PHASE_START_S[n]) the new phase should
+  // begin at. seek the boss track to that point so the music stays
+  // synced with the fight even when a phase ends early (boss bar
+  // drained ahead of the timer) or gets scrubbed via admin/dev keys.
+  // the seek itself gates on a small delta inside useHole2Music, so
+  // natural timer advances (where the music is already at the target)
+  // don't hitch -- only desync-worthy jumps actually move the playhead
+  const handlePhaseChange = useCallback((_newPhase: number, canonicalSongSec: number) => {
+    seekBossMusic(canonicalSongSec);
+  }, [seekBossMusic]);
 
   // admin panel -- unlocks the FIRST time the player types "lehrer"
   // inside the arena. engine pushes an api handle through the callback;
@@ -826,6 +858,7 @@ export function Hole2Page() {
           onAdminUnlock={handleAdminUnlock}
           onFightReset={handleFightReset}
           onDefeat={handleDefeat}
+          onPhaseChange={handlePhaseChange}
         />
       )}
 

@@ -40,6 +40,15 @@ export type Hole2EngineOpts = {
   // the player draining the boss bar. mirror of onVictory for the loss
   // condition -- the React layer mounts the DARKNESS RISES overlay
   onDefeat?: () => void;
+  // fired on every setPhase call with the canonical song-time the new
+  // phase is meant to start at (PHASE_START_S[n] in seconds). React
+  // layer seeks the boss track to this so an early-drained boss bar
+  // (or admin/dev phase scrub) doesn't leave the music trailing the
+  // fight. natural timer advances fire too, but the music is already
+  // at the target time -- a delta-gate in the seek handler turns those
+  // into no-ops, so only the desync-worthy cases actually move the
+  // playhead
+  onPhaseChange?: (newPhase: number, canonicalSongSec: number) => void;
 };
 
 export function startHole2Engine(opts: Hole2EngineOpts): () => void {
@@ -2779,6 +2788,13 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     // start-of-phase time. running R then jumping forward feels right
     const startS = PHASE_START_S[n] != null ? PHASE_START_S[n] : 0;
     state.startedAt = now - startS * 1000;
+    // song-sync hook -- hand the canonical seconds for this phase to
+    // the React layer so it can seek the boss track. covers early
+    // bossbar drains (music behind the fight) + admin/dev phase scrubs
+    // (music arbitrarily off). natural timer advances also fire here,
+    // but the music is already at startS -- the seek-gate skips the
+    // near-no-op so the common path stays glitch-free
+    try { opts.onPhaseChange?.(n, startS); } catch (_) {}
     // wipe stale orbs + beams + +s + towers + teeth so the new phase
     // starts clean. also reset phase 3 sub-mode + one-shot flags so
     // jumping back to phase 3 via ] replays the full 3a -> 3b sequence
