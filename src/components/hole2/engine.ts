@@ -3591,18 +3591,18 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
 
   // helper -- player torso hitbox bounds in px. used by both the
   // boss-overlap check and the per-orb collision sweep. constants
-  // mirror the css: .player is 4vh wide x 5.5vh tall, anchored at
-  // top: box-bottom - 8.5vh = 83.5vh. .player__hitbox is left:28%,
-  // width:44%, top:32%, height:36% relative to that 4x5.5 box (the
-  // pcts grew when the viewBox shrank from 16x24 -> 16x22, leaving
-  // the world-space rect on the same torso pixels)
+  // mirror the css: .player is 4vh wide x 5.5vh tall (viewBox 16x22,
+  // so each pixel = 0.25vh), anchored at top: box-bottom - 8.5vh =
+  // 83.5vh. .player__hitbox is a 5x5-pixel square centered on row 11
+  // of 22 -- world-space rect is 1.25vh x 1.25vh, half-width 0.625vh,
+  // top offset 8.5px * 0.25vh = 2.125vh from sprite top
   function getPlayerHitboxPx() {
     const vh = window.innerHeight / 100;
     const playerCxPx  = window.innerWidth / 2 + state.playerX;
     const playerTopPx = 83.5 * vh + state.playerY;
-    const hbHalfWPx   = (0.22 * 4)   * vh; // 0.88vh half-width (44%/2 of 4vh)
-    const hbTopOffPx  = (0.32 * 5.5) * vh; // 1.76vh from sprite top
-    const hbHPx       = (0.36 * 5.5) * vh; // 1.98vh tall
+    const hbHalfWPx   = 0.625 * vh; // half of 1.25vh (= 5px * 0.25vh/px)
+    const hbTopOffPx  = 2.125 * vh; // 8.5px * 0.25vh/px from sprite top
+    const hbHPx       = 1.25  * vh; // 5px * 0.25vh/px
     return {
       l: playerCxPx - hbHalfWPx,
       r: playerCxPx + hbHalfWPx,

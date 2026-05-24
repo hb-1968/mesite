@@ -2986,22 +2986,22 @@ html.hole-exit-white-in::before {
     animation: player-pop 220ms ease-out;
   }
 
-  /* torso hitbox -- colored outline on the upper body. tuned to
-     the placeholder svg's geometry; needs re-tuning if the sprite art
-     changes. with the compressed 16x22 sprite (legs shortened from 6
-     to 4), shoulders + torso span y=7..15 of 22 viewBox units = 32%
-     ..68% -- so top 32%, height 36% lands the rect on the actual
-     chest/abdomen. --hitbox-color is set per-frame by setOutput to
-     match the active GLOBE LVL pip color (green/blue/purple/yellow/
-     white as output ramps 1->5). default falls back to the old green
-     so the element still reads as a hitbox before any setOutput call
-     lands */
+  /* torso hitbox -- colored outline on the chest. 5x5 pixels in the
+     sprite's 16x22 viewBox (each pixel = 0.25vh of the 4vh x 5.5vh
+     sprite), centered horizontally + centered on row 11 of 22 so the
+     box lands on the chest/abdomen where the larger rect used to.
+     percentages: width 5/16 = 31.25%, left (16-5)/2/16 = 34.375%,
+     height 5/22 ~= 22.73%, top (11-2.5)/22 ~= 38.64%. --hitbox-color
+     is set per-frame by setOutput to match the active GLOBE LVL pip
+     color (green/blue/purple/yellow/white as output ramps 1->5).
+     default falls back to the old green so the element still reads
+     as a hitbox before any setOutput call lands */
   .player__hitbox {
     position: absolute;
-    left: 28%;
-    width: 44%;
-    top: 32%;
-    height: 36%;
+    left: 34.375%;
+    width: 31.25%;
+    top: 38.64%;
+    height: 22.73%;
     border: 2px solid var(--hitbox-color);
     pointer-events: none;
     box-shadow:
