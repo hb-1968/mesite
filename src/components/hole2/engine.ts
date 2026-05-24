@@ -2898,10 +2898,13 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       showTransition(cap.caption, cap.sub, dur);
       if (state.transitionUntilT < cardUntilT) state.transitionUntilT = cardUntilT;
     }
-    // hud stays vanished through phase 4 AND phase 5 -- boss is gone
-    // across both, no health to track, no on-screen sense in showing
-    // the timer. firePortalExit already set data-vanished for phase 4;
-    // phase 5 needs it set here. always cleared on other phases
+    // hud stays vanished through phase 4 AND the OPENING of phase 5 --
+    // boss is gone across both, no health to track, no on-screen sense
+    // in showing the timer. firePortalExit already set data-vanished
+    // for phase 4; phase 5 needs it set here. always cleared on other
+    // phases. the reveal mid-phase-5 (the 5b / gate-storm beat) is
+    // handled by enterSection -- 5a sections (lance + idle) keep the
+    // hud hidden, gate-storm flips it back on
     if (n !== 4 && n !== 5) {
       hudEl.removeAttribute('data-vanished');
     } else {
@@ -5481,6 +5484,12 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       // until the section ends. enterSection just sets the mode flag;
       // the loop handles all the actual gate work
       state.patternName = 'gate-storm';
+      // hud returns on 5b -- setPhase hid it at phase 5 entry (the 5a
+      // lance ambush has no boss + no readout to track), but the gate
+      // storm reads as a formal pattern again. fades back via the same
+      // .hud[data-vanished] transition that hid it, so the return
+      // mirrors the exit visually
+      hudEl.removeAttribute('data-vanished');
     } else if (sec.kind === 'split-cross-volley') {
       // phase 6 -- staggered splitting-beam crosses. sec.count is the
       // max to spawn this section; the dispatcher fires one every
