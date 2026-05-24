@@ -294,13 +294,15 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // (900ms) so the lockout ends exactly when the sun fades out
   const SPIRIT_BOMB_LOCK_MS = 900;
   // bomb damage to the boss -- only applies if the boss falls within
-  // the visual core's range at fire-time. raw value is small on
-  // purpose ("not substantial"); phase resistance multiplies it down
-  // further later in the fight. range matches the visible core at
-  // peak scale (~45vh from the player). default boss-vertical is
-  // ~59vh away from the player, so landing damage requires the
-  // player to move up toward the boss before firing
-  const SPIRIT_BOMB_DAMAGE   = 0.05;
+  // the visual core's range at fire-time. bumped from 0.05 -- with
+  // bombs refilling every phase, the bomb is no longer a once-a-fight
+  // budget, so each cast can land a real chunk without breaking the
+  // pacing. phase resistance still multiplies it down later in the
+  // fight (phase 8: 0.15 * 0.10 = ~1.5% of bar per bomb). range
+  // matches the visible core at peak scale (~45vh from the player).
+  // default boss-vertical is ~59vh away, so landing damage requires
+  // the player to move up toward the boss before firing
+  const SPIRIT_BOMB_DAMAGE   = 0.15;
   const SPIRIT_BOMB_RANGE_VH = 45;
 
   // clamp ranges -- derived from the INNER box (the playable opening
@@ -2766,6 +2768,13 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       state.boss = 1.0;
       healthFill.style.width = '100%';
     }
+    // light elemental -- refill bomb pips on every phase boundary
+    // (including 7 -> 8, which the boss-health refill skips). a fresh
+    // pool per phase makes the bomb feel like a movement-scoped
+    // resource rather than a once-a-fight panic button, and ensures
+    // the player can actually use it for chip dmg in the later phases
+    // where the damage multiplier is harshest
+    setBombs(3);
     // rewind the fight clock so the hud timer reads the canonical
     // start-of-phase time. running R then jumping forward feels right
     const startS = PHASE_START_S[n] != null ? PHASE_START_S[n] : 0;
