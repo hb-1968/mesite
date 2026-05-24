@@ -475,32 +475,46 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // 17vh + half-height 5vh). these are used by the orb spawners
   const BOSS_CENTER_Y_VH = 22;
 
-  // shadow-orb speed + sizes per pattern. tunable
-  const ORB_SPEED_DIAGONAL_VH = 34;
-  const ORB_SPEED_WEDGE_VH    = 42;
-  const ORB_SPEED_SPIRAL_VH   = 28;
+  // touhou-style bullet bloom -- every shadow-orb + swear bubble launches
+  // at BULLET_INIT_BOOST * targetV, then linearly decays to targetV over
+  // BULLET_DECAY_MS. snappy spawn so the pattern reads, slow cruise so
+  // the player dodges by precision rather than raw reflex. the ORB_SPEED_*
+  // constants below describe the TARGET cruise -- launch is ~2.2x that
+  const BULLET_INIT_BOOST     = 2.2;
+  const BULLET_DECAY_MS       = 280;
 
-  // diagonal pattern -- 5-orb row per volley, alternating left/right
-  const DIAGONAL_INTERVAL_MS  = 760;
+  // shadow-orb cruise speed per pattern. launch speed = BULLET_INIT_BOOST
+  // * this; bullets decay to the listed value within BULLET_DECAY_MS
+  const ORB_SPEED_DIAGONAL_VH = 18;
+  const ORB_SPEED_WEDGE_VH    = 20;
+  const ORB_SPEED_SPIRAL_VH   = 14;
+
+  // diagonal pattern -- 9-orb row per volley, alternating left/right.
+  // touhou-pass widened the wall + tightened cadence; spacing dropped so
+  // the wall feels like a precision threading problem, not a wide sweep
+  const DIAGONAL_INTERVAL_MS  = 580;
   const DIAGONAL_ANGLE_DEG    = 32;
-  const DIAGONAL_COUNT        = 5;
-  const DIAGONAL_SPACING_VH   = 2.0;
+  const DIAGONAL_COUNT        = 9;
+  const DIAGONAL_SPACING_VH   = 1.5;
 
-  // wedge pattern -- 5-orb cone, tight spread, aimed at player
-  const WEDGE_INTERVAL_MS     = 680;
-  const WEDGE_SPREAD_DEG      = 18;
-  const WEDGE_COUNT           = 5;
+  // wedge pattern -- 9-orb cone, wider spread aimed at player. with the
+  // bloom decay the cone snaps into shape then crawls -- player reads
+  // the spread + steps through one of the gaps
+  const WEDGE_INTERVAL_MS     = 520;
+  const WEDGE_SPREAD_DEG      = 28;
+  const WEDGE_COUNT           = 9;
 
-  // spiral pattern -- continuous rotating pair
-  const SPIRAL_INTERVAL_MS    = 110;
+  // spiral pattern -- continuous rotating pair, denser cadence; arms
+  // wind tighter so the resulting spiral reads more like ZUN's
+  const SPIRAL_INTERVAL_MS    = 80;
   const SPIRAL_STEP_RAD       = 0.62;
 
   // phase 2 -- cross beams. fires 4-direction beam salvos from a
   // centered boss; each beam splits in two inward on first contact
   // with the inner border. slight rotation per salvo keeps things
   // from settling into a static cross
-  const CROSS_BEAM_INTERVAL_MS = 1400;
-  const CROSS_BEAM_SPEED_VH    = 40;
+  const CROSS_BEAM_INTERVAL_MS = 1050;
+  const CROSS_BEAM_SPEED_VH    = 22;   // target cruise; launch ~48 with bloom
   const CROSS_BEAM_ROT_STEP    = 22.5; // deg per salvo
 
   // phase 2 layered -- radial damage-zone beams + matching orb spray.
@@ -519,8 +533,8 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   const RADIAL_BEAM_ROT_DEG     = 20;
   const RADIAL_BEAM_LENGTH_VH   = 78;    // long enough to clear the inner box from boss center
   const RADIAL_BEAM_WIDTH_VH    = 3.4;   // wide enough to read as a damage zone, not a laser
-  const RADIAL_SPRAY_COUNT      = 14;
-  const RADIAL_SPRAY_SPEED_VH   = 30;
+  const RADIAL_SPRAY_COUNT      = 22;  // touhou-pass: denser ring
+  const RADIAL_SPRAY_SPEED_VH   = 16;  // target cruise; launch ~35 with bloom
 
   // phase 3 opener -- SHADOW SCATTER. boss orbits the arena on a wide
   // ellipse at rapid speed; while orbiting, tosses 12 spinning +
@@ -643,8 +657,8 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // ramped-density overrides for the phase-1 patterns reused in the
   // interlude. tighter than phase-1's cadence so the pad reads as
   // "almost as busy as scatter" rather than "phase-1 throwback"
-  const PHASE_3_INTERLUDE_DIAGONAL_INTERVAL_MS = 500;  // phase-1 default is 760
-  const PHASE_3_INTERLUDE_WEDGE_INTERVAL_MS    = 450;  // phase-1 default is 680
+  const PHASE_3_INTERLUDE_DIAGONAL_INTERVAL_MS = 380;  // phase-1 default is 580 post-touhou-pass
+  const PHASE_3_INTERLUDE_WEDGE_INTERVAL_MS    = 340;  // phase-1 default is 520 post-touhou-pass
   // + tosses come in trios -- three simultaneous spawns per cycle,
   // each picking its own random target inside the box. spread out so
   // the total + load over the 15s interlude is ~3 trios = 9 +s
@@ -687,7 +701,7 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   const PHASE_3_HEX_OUTER_R_VH         = 37;
   const PHASE_3_HEX_ROT_RATE_DPS       = 15;     // halved from 30 -- bigger lattice + the precision-dodge framing
   const PHASE_3_HEX_FADE_MS            = 350;    // fade-in + fade-out lead-in
-  const PHASE_3_HEX_CROSS_INTERVAL_MS  = 1400;   // matches CROSS_BEAM_INTERVAL_MS so it reads as p2's cross
+  const PHASE_3_HEX_CROSS_INTERVAL_MS  = 1050;   // matches CROSS_BEAM_INTERVAL_MS (post-touhou-pass) so it reads as p2's cross
   // total hex span -- staggered spawns + the last cycle's full lifetime
   // = (N-1) * STAGGER + DUR. drives the cursor-intro start time
   const PHASE_3_HEX_TOTAL_MS = (PHASE_3_HEX_CYCLE_COUNT - 1) * PHASE_3_HEX_CYCLE_STAGGER_MS +
@@ -698,12 +712,12 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // (vs. fanned spread) so the player sees "they queue up and the lead
   // one splits before the next column lands" -- which is the lesson
   // the tower fans then exploit at higher count + width
-  const PHASE_3_CURSOR_INTRO_VOLLEY_COUNT       = 5;
-  const PHASE_3_CURSOR_INTRO_VOLLEY_INTERVAL_MS = 1000;
-  const PHASE_3_CURSOR_INTRO_STACK_COUNT        = 3;
-  const PHASE_3_CURSOR_INTRO_STACK_SPACING_VH   = 2.4;  // along firing dir, behind lead tooth
+  const PHASE_3_CURSOR_INTRO_VOLLEY_COUNT       = 6;     // touhou-pass: one extra wave
+  const PHASE_3_CURSOR_INTRO_VOLLEY_INTERVAL_MS = 700;   // tighter gap between volleys
+  const PHASE_3_CURSOR_INTRO_STACK_COUNT        = 4;     // 4-tooth stack (was 3)
+  const PHASE_3_CURSOR_INTRO_STACK_SPACING_VH   = 2.4;   // along firing dir, behind lead tooth
   const PHASE_3_CURSOR_INTRO_TOTAL_MS = PHASE_3_CURSOR_INTRO_VOLLEY_COUNT *
-                                        PHASE_3_CURSOR_INTRO_VOLLEY_INTERVAL_MS;  // 5000
+                                        PHASE_3_CURSOR_INTRO_VOLLEY_INTERVAL_MS;  // 4200
 
   // TOWER BARRAGE -- SHELVED to phase 4+. previously fired after the
   // interlude as a return-then-towers beat; lifted out of phase 3 so
@@ -729,9 +743,13 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // teeth -- launched at tower's launchT, then split 3 times. final 8
   // teeth per original after gen 3
   const TOOTH_LAUNCH_SPEED_VH        = 26;
-  const TOOTH_SPLIT_INTERVALS_MS     = [900, 700, 500];  // gen 0->1, 1->2, 2->3
+  // touhou-pass: launch stays snappy but the slowdown happens really
+  // quickly -- splits arrive in ~350/280/220ms windows with a steeper
+  // 0.72 falloff per split, so gen 3 teeth crawl at 26*0.72^3 = 9.7vh/s.
+  // total cascade < 900ms from launch to final speed
+  const TOOTH_SPLIT_INTERVALS_MS     = [350, 280, 220];  // gen 0->1, 1->2, 2->3
   const TOOTH_SPLIT_ANGLE_DEG        = 22;     // +- per split
-  const TOOTH_SPEED_FALLOFF          = 0.84;   // speed multiplier per split (slows progressively)
+  const TOOTH_SPEED_FALLOFF          = 0.72;   // speed multiplier per split (steeper post-touhou-pass)
   // tooth bounding box -- roughly square so the cursor silhouette
   // (clip-path on .tooth) has room for both arrowhead and tail. tip
   // sits at the local +x edge; rotation aligns it with velocity
@@ -792,11 +810,11 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   const PHASE_5B_RING_RADIUS_VH        = 22;    // mean distance from player
   const PHASE_5B_RING_SIGMA_VH         = 3;     // gaussian-ish variance
   const PHASE_5B_RING_MARGIN_VH        = 4;     // keep gates away from box edges
-  const PHASE_5B_LINES_PER_VOLLEY      = 2;     // 2 densely-packed lines per volley
-  const PHASE_5B_LINE_FAN_DEG          = 16;    // angular spread between the 2 lines
-  const PHASE_5B_ORBS_PER_LINE         = 3;     // 3 orbs per line, stacked behind the leader
+  const PHASE_5B_LINES_PER_VOLLEY      = 3;     // touhou-pass: 3 lines fanned wider
+  const PHASE_5B_LINE_FAN_DEG          = 22;    // wider angular spread to read as 3 distinct lines
+  const PHASE_5B_ORBS_PER_LINE         = 5;     // 5 stacked per line -- denser threading problem
   const PHASE_5B_ORB_STACK_VH          = 1.4;   // spacing along firing dir between stacked orbs
-  const PHASE_5B_ORB_SPEED_VH          = 26;
+  const PHASE_5B_ORB_SPEED_VH          = 14;    // target cruise; launch ~31 with bloom
   const PHASE_5B_GATE_TARGET_COUNT     = 4;
   const PHASE_5B_GATE_MAX_COUNT        = 5;     // hard cap; brief overshoot allowed
   const PHASE_5B_GATE_SPAWN_PROB_UNDER = 0.12;  // P(spawn) per frame when active < target
@@ -906,6 +924,16 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // clamped to the inner box so puddles never fall outside the arena
   const PHASE_7A_PUDDLE_RING_MIN_VH   = 4;
   const PHASE_7A_PUDDLE_RING_MAX_VH   = 36;
+  // rejection sampling for puddle placement -- candidates that land
+  // on top of an existing puddle or inside a live lance branch get
+  // thrown out. CLEARANCE is the corridor width past pure geometric
+  // overlap (player torso is ~1.8vh wide, so 2.5vh leaves a real
+  // thread-the-needle gap). if we burn the attempt budget without
+  // finding a clean spot we skip the spawn -- caller still advances
+  // nextPuddleT so cadence keeps ticking + density self-regulates as
+  // existing lances time out
+  const PHASE_7A_PUDDLE_REJECT_ATTEMPTS = 12;
+  const PHASE_7A_PUDDLE_CLEARANCE_VH    = 2.5;
   // phase 7a boss MOVEMENT -- gentle tight oscillation around home.
   // small lissajous (x at base ω, y at 2x) so the boss traces a
   // tiny figure-8 / flat-oval blend, alive-but-anchored. amplitude
@@ -1342,9 +1370,9 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   const PHASE_6_SWEAR_WORD        = 'DIE';
   const PHASE_6_SWEAR_REPEAT_MIN  = 2;
   const PHASE_6_SWEAR_REPEAT_MAX  = 5;
-  const PHASE_6_SWEAR_INTERVAL_MS = 110;  // rapid -- new bubble every ~110ms
+  const PHASE_6_SWEAR_INTERVAL_MS = 80;   // touhou-pass: denser shower
   const PHASE_6_SWEAR_LIFE_MS     = 1800;
-  const PHASE_6_SWEAR_SPEED_VH    = 38;   // projectile pace, not float
+  const PHASE_6_SWEAR_SPEED_VH    = 20;   // target cruise; launch ~44 with bloom
   const PHASE_6_SWEAR_TILT_DEG    = 14;   // max rotation per bubble (static, no spin)
   const PHASE_6_SWEAR_SCATTER_VH  = 6;    // spawn jitter around boss center
   const PHASE_6_SWEAR_FAN_DEG     = 95;   // half-fan of aim spread (0 = straight down,
@@ -1395,8 +1423,13 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     beamsEl.appendChild(el);
     requestAnimationFrame(() => el.setAttribute('data-on', 'true'));
 
+    // bloom-decay -- same model as shadow orbs. vx/vy stored here are
+    // the TARGET cruise; updateSwearBubbles applies boost*factor each
+    // tick so bubbles launch fast then crawl
     state.activeSwearBubbles.push({
-      el, x: sx, y: sy, vx, vy,
+      el, x: sx, y: sy,
+      vx: vx * BULLET_INIT_BOOST, vy: vy * BULLET_INIT_BOOST,
+      vxT: vx, vyT: vy,
       spawnT: t,
       removeAtT: t + PHASE_6_SWEAR_LIFE_MS,
       leaving: false
@@ -1416,6 +1449,12 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     if (state.activeSwearBubbles.length === 0) return;
     for (let i = state.activeSwearBubbles.length - 1; i >= 0; i--) {
       const S = state.activeSwearBubbles[i];
+      // bloom-decay -- linear from boost at age 0 to 1.0 at decayMs
+      const age = t - S.spawnT;
+      const k = age >= BULLET_DECAY_MS ? 1 : age / BULLET_DECAY_MS;
+      const factor = BULLET_INIT_BOOST + (1 - BULLET_INIT_BOOST) * k;
+      S.vx = S.vxT * factor;
+      S.vy = S.vyT * factor;
       S.x += S.vx * dt;
       S.y += S.vy * dt;
       S.el.style.left = S.x + 'px';
@@ -1492,22 +1531,84 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // telegraph -- the puddle IS the cue). lance direction is biased
   // toward the player's position at eruption-time so dodging means
   // moving away from each hotspot before it lights
-  function spawnPuddle(t) {
+  // squared distance from point (px,py) to line segment (ax,ay)-(bx,by)
+  function pointToSegmentDist2(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1) {
+      const ex0 = px - ax, ey0 = py - ay;
+      return ex0 * ex0 + ey0 * ey0;
+    }
+    let u = ((px - ax) * dx + (py - ay) * dy) / len2;
+    u = Math.max(0, Math.min(1, u));
+    const qx = ax + u * dx, qy = ay + u * dy;
+    const ex = px - qx, ey = py - qy;
+    return ex * ex + ey * ey;
+  }
+
+  // true if a new puddle at (cx,cy) has at least clearancePx of
+  // breathing room from every existing puddle + every live lance
+  // segment (root + branches). point-to-segment dist for branches,
+  // circle-circle for puddles. existing puddles count even pre-
+  // eruption -- their position already commits a future lance there
+  function puddlePositionIsClear(cx, cy, puddleRadiusPx, clearancePx) {
+    const minPuddleDist = 2 * puddleRadiusPx + clearancePx;
+    const minPuddleDist2 = minPuddleDist * minPuddleDist;
+    for (const P of state.activePuddles) {
+      const dx = cx - P.x, dy = cy - P.y;
+      if (dx * dx + dy * dy < minPuddleDist2) return false;
+    }
+    for (const L of state.activeLances) {
+      if (!L.segments || L.segments.length === 0) continue;
+      for (const seg of L.segments) {
+        const bx = seg.originX + Math.cos(seg.dirRad) * seg.length;
+        const by = seg.originY + Math.sin(seg.dirRad) * seg.length;
+        const minDist = puddleRadiusPx + seg.width / 2 + clearancePx;
+        if (pointToSegmentDist2(cx, cy, seg.originX, seg.originY, bx, by) < minDist * minDist) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  // rejection-sample a puddle position within the arena ring. without
+  // this, dense waves stack puddles on each other + drop them inside
+  // lance trees still snarling from prior eruptions. returns null if
+  // the arena's just too crowded -- caller skips this beat
+  function pickPuddlePosition() {
     const vh = window.innerHeight / 100;
     const cx = window.innerWidth / 2;
     const arenaCy = 52 * vh;
-    // random angle around arena center; gaussian-ish radius
-    const ang = Math.random() * 2 * Math.PI;
-    const r01 = (Math.random() + Math.random()) - 1;
     const baseR = (PHASE_7A_PUDDLE_RING_MIN_VH + PHASE_7A_PUDDLE_RING_MAX_VH) / 2;
     const spanR = (PHASE_7A_PUDDLE_RING_MAX_VH - PHASE_7A_PUDDLE_RING_MIN_VH) / 2;
-    const distVh = baseR + r01 * spanR;
-    let px = cx + Math.cos(ang) * distVh * vh;
-    let py = arenaCy + Math.sin(ang) * distVh * vh;
     const ib = getInnerBoxPx();
     const m  = PHASE_7A_PUDDLE_RADIUS_VH * vh + 2 * vh;
-    px = Math.max(ib.l + m, Math.min(ib.r - m, px));
-    py = Math.max(ib.t + m, Math.min(ib.b - m, py));
+    const puddleRadiusPx = PHASE_7A_PUDDLE_RADIUS_VH * vh;
+    const clearancePx    = PHASE_7A_PUDDLE_CLEARANCE_VH * vh;
+    for (let attempt = 0; attempt < PHASE_7A_PUDDLE_REJECT_ATTEMPTS; attempt++) {
+      const ang = Math.random() * 2 * Math.PI;
+      const r01 = (Math.random() + Math.random()) - 1;     // gaussian-ish
+      const distVh = baseR + r01 * spanR;
+      let px = cx + Math.cos(ang) * distVh * vh;
+      let py = arenaCy + Math.sin(ang) * distVh * vh;
+      px = Math.max(ib.l + m, Math.min(ib.r - m, px));
+      py = Math.max(ib.t + m, Math.min(ib.b - m, py));
+      if (puddlePositionIsClear(px, py, puddleRadiusPx, clearancePx)) {
+        return { px, py };
+      }
+    }
+    return null;
+  }
+
+  function spawnPuddle(t) {
+    const vh = window.innerHeight / 100;
+    const pos = pickPuddlePosition();
+    // no clean slot -- skip this beat. caller's nextPuddleT still
+    // advances, so cadence is preserved + density drops as existing
+    // lances finish dissolving
+    if (!pos) return;
+    const { px, py } = pos;
     const el = document.createElement('div');
     el.className = 'shadow-puddle';
     el.style.left = px + 'px';
@@ -3569,13 +3670,17 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     if (p && typeof p.catch === 'function') p.catch(() => {});
   }
 
-  // opts: { isBeam, bounceCount, cycleEndT }. beam orbs split into 2
-  // inward-angled orbs when they first cross the inner border (phase
-  // 2's patchouli-style cross beams); the splits inherit bounceCount=1
-  // and just despawn when they leave the inner box. cycleEndT (ms
-  // absolute) is the explicit-cull deadline used by the phase-2
-  // radial spray so its orbs disappear with the beams rather than
-  // depending on flight time to clear the box
+  // opts: { isBeam, bounceCount, cycleEndT, boost, decayMs }. beam orbs
+  // split into 2 inward-angled orbs when they first cross the inner border
+  // (phase 2's patchouli-style cross beams); the splits inherit
+  // bounceCount=1 and just despawn when they leave the inner box.
+  // cycleEndT (ms absolute) is the explicit-cull deadline used by the
+  // phase-2 radial spray so its orbs disappear with the beams rather
+  // than depending on flight time to clear the box.
+  // vx/vy are the TARGET cruise velocity -- bullet launches at boost*v
+  // and decays linearly to v over decayMs (touhou bloom). per-orb boost
+  // + decay defaults to BULLET_INIT_BOOST + BULLET_DECAY_MS, override via
+  // opts when a pattern wants a different launch feel
   function spawnShadowOrb(x, y, vx, vy, opts) {
     // universal fire cue -- rate-limited so a pair/fan/spray collapses
     // to one play. spaced solo orbs still each get their cue
@@ -3584,6 +3689,8 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     const bounceCount = (opts && opts.bounceCount) || 0;
     const cycleEndT   = (opts && opts.cycleEndT)   || 0;
     const big         = !!(opts && opts.big);
+    const boost       = (opts && opts.boost   != null) ? opts.boost   : BULLET_INIT_BOOST;
+    const decayMs     = (opts && opts.decayMs != null) ? opts.decayMs : BULLET_DECAY_MS;
     const el = document.createElement('div');
     el.className = 'shadow-orb' +
       (isBeam ? ' shadow-orb--beam' : '') +
@@ -3601,7 +3708,18 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     const vhPx = window.innerHeight / 100;
     const hitR = big ? 1.2 * vhPx : 0;
     orbsEl.appendChild(el);
-    state.enemyBullets.push({ el, x, y, vx, vy, isBeam, bounceCount, cycleEndT, hitR });
+    // vx/vy on the orb are the EFFECTIVE current velocity (target * factor);
+    // updateEnemyBullets rewrites them each tick from vxT/vyT. splitBeamInward
+    // + other consumers can still read b.vx/b.vy without caring about decay
+    const spawnT = _gameNow();
+    const factor0 = boost;
+    state.enemyBullets.push({
+      el, x, y,
+      vx: vx * factor0, vy: vy * factor0,
+      vxT: vx, vyT: vy,
+      boost, decayMs, spawnT,
+      isBeam, bounceCount, cycleEndT, hitR
+    });
   }
 
   // beam first-bounce -- spawn 2 inward-angled split orbs at +-45 deg
@@ -3633,6 +3751,14 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     const immune = t < state.immuneUntilT;
     for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
       const b = state.enemyBullets[i];
+      // touhou bloom -- factor lerps from boost at age 0 to 1.0 at decayMs,
+      // then sticks at 1.0. b.vx/b.vy stay correct for downstream consumers
+      // (splitBeamInward reads them at the moment of inner-box crossing)
+      const age = t - b.spawnT;
+      const k = age >= b.decayMs ? 1 : age / b.decayMs;
+      const factor = b.boost + (1 - b.boost) * k;
+      b.vx = b.vxT * factor;
+      b.vy = b.vyT * factor;
       b.x += b.vx * dt;
       b.y += b.vy * dt;
       // cycle-end cull -- spray orbs from the phase-2 radial pattern
@@ -4552,9 +4678,9 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // arc of shadow orbs aimed at the player. used by phase 7a's
   // wave-2 roaming towers so the payload reads differently from
   // the standard teeth (which split + fan out via their own logic)
-  const PHASE_7A_ORB_FAN_COUNT     = 9;
-  const PHASE_7A_ORB_FAN_ARC_DEG   = 100;
-  const PHASE_7A_ORB_FAN_SPEED_VH  = 28;
+  const PHASE_7A_ORB_FAN_COUNT     = 15;   // touhou-pass: denser fan
+  const PHASE_7A_ORB_FAN_ARC_DEG   = 130;  // wider arc to spread the extra orbs
+  const PHASE_7A_ORB_FAN_SPEED_VH  = 15;   // target cruise; launch ~33 with bloom
   function launchOrbsFromTower(tw, t) {
     const vh = window.innerHeight / 100;
     const p = getPlayerHitboxPx();
