@@ -144,7 +144,7 @@ const BOXES: ReadonlyArray<BoxData> = [
         { type: 'pause', ms: 1500 },
         { type: 'text', text: ' boy,' },
         { type: 'pause', ms: 1500 },
-        { type: 'text', text: ' where do I even begin? If you know the voice and the creeping visage of a shadow,' },
+        { type: 'text', text: ' where do I even begin? I did it again, if you know the voice -- ' },
         { type: 'pause', ms: 1500 },
         { type: 'text', text: ' then I solemnly deliver that final closure robbed of you by your false reality.' }
       ]]
