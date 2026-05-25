@@ -3038,12 +3038,19 @@ html.hole-exit-white-in::before {
     width: 0.7vh;
     height: 0.7vh;
     background: var(--hud-fg);
-    transform: translate(-50%, -50%);
+    /* position rides --bx/--by (written each frame by the engine) so the
+       per-frame update is a GPU-composited transform, not a layout-
+       triggering left/top write. the -50% keeps it centered on its point */
+    transform: translate(var(--bx, 0px), var(--by, 0px)) translate(-50%, -50%);
+    will-change: transform;
     box-shadow:
       0 0 0 1px rgba(0, 0, 0, 0.5),
       0 0 4px rgba(255, 230, 180, 0.6);
     image-rendering: pixelated;
   }
+  /* pooled (despawned) bullet -- parked hidden for reuse by the engine's
+     _bulletPool. cleared when the node is re-classed on the next spawn */
+  .bullet--pooled { display: none; }
 
   /* globe -- collectible power item. drops from the boss when its
      health crosses below 15% (one per phase). drifts downward through
@@ -3190,13 +3197,18 @@ html.hole-exit-white-in::before {
     background: #050509;
     border: 1px solid #16161e;
     border-radius: 50%;
-    transform: translate(-50%, -50%);
+    /* position rides --ox/--oy (written each frame by the engine) -- GPU-
+       composited transform instead of a layout-triggering left/top write */
+    transform: translate(var(--ox, 0px), var(--oy, 0px)) translate(-50%, -50%);
+    will-change: transform;
     pointer-events: none;
     z-index: 4;
     box-shadow:
       0 0 6px rgba(0, 0, 0, 0.65),
       inset 0 0 3px rgba(255, 255, 255, 0.06);
   }
+  /* pooled (despawned) orb -- parked hidden for reuse by _orbPool */
+  .shadow-orb--pooled { display: none; }
   /* beam variant -- elongated rectangle aligned with velocity. used by
      phase 2 cross beams. inline transform from js handles rotation
      (translate -50% -50% + rotate) since the angle is per-orb */
@@ -3205,6 +3217,10 @@ html.hole-exit-white-in::before {
     height: 2.8vh;
     border-radius: 0.45vh / 1.4vh;
     background: #060610;
+    /* composes the per-frame --ox/--oy translate with the per-orb --orot
+       rotation (written once at spawn). overrides the base .shadow-orb
+       transform by source order (later rule, equal specificity) */
+    transform: translate(var(--ox, 0px), var(--oy, 0px)) translate(-50%, -50%) rotate(var(--orot, 0rad));
     box-shadow:
       0 0 8px rgba(0, 0, 0, 0.75),
       inset 0 0 4px rgba(255, 255, 255, 0.08);
