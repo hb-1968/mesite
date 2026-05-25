@@ -6849,6 +6849,13 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // just re-arm the rAF without advancing -- _gameNow() keeps the
   // world frozen via _pauseAccum
   let lastT = _gameNow();
+  // Phase-3 runtime perf sampler. only active when the quality preference
+  // is 'auto'. one-shot: collects dt over the first PERF_SAMPLE_N
+  // processed (non-paused) gameplay frames, then either drops one visual
+  // tier (downgrade-only) or disarms. never touches gameplay
+  let _perfSamples: number[] = [];
+  let _perfChecked = false;
+  const PERF_SAMPLE_N = 120;
   let _rafId = 0;
   function tick(_rafT) {
     // hard wrap -- any throw inside the body would normally kill the
@@ -6876,6 +6883,33 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     const t = _gameNow();
     const dt = Math.min(64, t - lastT) / 1000;
     lastT = t;
+    // Phase-3 runtime perf check -- only when the preference is 'auto'
+    // (read live so an AdminPanel pick mid-fight halts it) and we're not
+    // already at LOW. if the frame budget is consistently blown across
+    // the sample window, drop one visual tier. downgrade-only, one-shot;
+    // onPerfChange flips data-perf in React. gameplay is never affected
+    if (!_perfChecked && _readQuality() === 'auto') {
+      const curTier = _readTier();
+      if (curTier === 'low') {
+        _perfChecked = true;  // nothing lower to drop to
+      } else {
+        _perfSamples.push(dt);
+        if (_perfSamples.length >= PERF_SAMPLE_N) {
+          let sum = 0, dropped = 0;
+          for (const d of _perfSamples) { sum += d; if (d > 0.025) dropped++; }
+          const avg = sum / _perfSamples.length;
+          // dual gate: >20% of frames blown OR a sustained sub-~45fps
+          // average. requiring real, persistent strain keeps a single
+          // transient stutter from tripping the downgrade
+          if (dropped > 24 || avg > 0.022) {
+            const next: Hole2Tier = curTier === 'high' ? 'med' : 'low';
+            try { opts.onPerfChange?.('auto', next); } catch (_) {}
+          }
+          _perfChecked = true;
+          _perfSamples = [];
+        }
+      }
+    }
     const vh = window.innerHeight / 100;
     // dx/dy declared at function scope so the facing code below can
     // read them whether or not the spiral hold path ran

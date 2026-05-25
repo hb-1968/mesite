@@ -539,6 +539,19 @@ function prefersReducedMotion(): boolean {
 }
 function detectTier(): Hole2Tier {
   if (prefersReducedMotion()) return 'low';
+  // static device heuristic for the initial 'auto' resolution. cores is
+  // widely supported; deviceMemory is Chromium-only (undefined elsewhere,
+  // so we don't penalize a device for not reporting it). the engine's
+  // runtime sampler (Phase 3.2) is the safety net when this guesses high
+  // on a device that actually chokes
+  const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
+  const mem = (typeof navigator !== 'undefined')
+    ? (navigator as { deviceMemory?: number }).deviceMemory
+    : undefined;
+  if (cores <= 2) return 'low';
+  if (mem != null && mem <= 2) return 'low';
+  if (cores <= 4 && (mem == null || mem <= 4)) return 'med';
+  if (typeof window !== 'undefined' && window.innerWidth < 900 && cores < 8) return 'med';
   return 'high';
 }
 function resolveTier(quality: Hole2Quality): Hole2Tier {
