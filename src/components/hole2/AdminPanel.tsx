@@ -105,6 +105,30 @@ export function AdminPanel({ api }: { api: Hole2EngineHandle }) {
           </button>
         </div>
       </section>
+
+      <section className="hole2-admin__section">
+        <div className="hole2-admin__label">PERF</div>
+        <div className="hole2-admin__grid hole2-admin__grid--perf">
+          {(['low', 'med', 'high', 'auto'] as const).map((q) => {
+            const active = snap.quality === q;
+            return (
+              <button
+                key={q}
+                type="button"
+                className="hole2-admin__btn"
+                data-active={active ? 'true' : 'false'}
+                title={q === 'auto' ? `auto -> ${snap.tier}` : q}
+                onClick={() => {
+                  api.setPerf(q);
+                  setSnap(api.getState());
+                }}
+              >
+                {q.toUpperCase()}
+              </button>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }

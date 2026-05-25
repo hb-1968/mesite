@@ -921,6 +921,7 @@ export function Hole2Page() {
       {phase === 'arena' && !begun && (
         <>
           <HolePlayer />
+          <PerfToggle quality={perfQuality} tier={perfTier} onPick={handlePerfChange} />
           <BeginBox onBegin={handleBegin} />
         </>
       )}
@@ -952,7 +953,7 @@ export function Hole2Page() {
           document.visibilitychange -> hidden). engine handles the
           actual freeze; this layer just tells the player what
           happened + what key resumes it */}
-      {paused && <PauseOverlay />}
+      {paused && <PauseOverlay tier={perfTier} />}
 
       {/* pixel-art fireworks + gothic caption. mounts once and stays
           up; the user navigates away via REND or the hash menu */}
@@ -963,6 +964,44 @@ export function Hole2Page() {
           try again */}
       {defeated && !victory && <LoseScreen />}
     </section>
+  );
+}
+
+// ---- perf toggle ----------------------------------------------------
+// graphics-quality pills, shown above the BEGIN box during arena-ready.
+// a one-shot pick before the fight starts (no mid-fight live-swap, so no
+// active-entity migration). routes through onPick -> handlePerfChange,
+// which updates data-perf + persists. pills stopPropagation so a click
+// doesn't bubble to the stage / begin box
+function PerfToggle({
+  quality,
+  tier,
+  onPick
+}: {
+  quality: Hole2Quality;
+  tier: Hole2Tier;
+  onPick: (q: Hole2Quality) => void;
+}) {
+  const opts: Hole2Quality[] = ['low', 'med', 'high', 'auto'];
+  return (
+    <div className="hole2-perf-toggle" role="group" aria-label="graphics quality">
+      <span className="hole2-perf-toggle__label">quality</span>
+      {opts.map((q) => (
+        <button
+          key={q}
+          type="button"
+          className="hole2-perf-toggle__pill"
+          data-active={quality === q ? 'true' : 'false'}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onPick(q);
+          }}
+        >
+          {q === 'auto' ? `auto (${tier})` : q}
+        </button>
+      ))}
+    </div>
   );
 }
 

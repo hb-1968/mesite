@@ -3,7 +3,7 @@
 // freeze (game-time clock, audio, key input). gothic register matches
 // the phase-transition title-card so the pause reads as part of the
 // movement
-export function PauseOverlay() {
+export function PauseOverlay({ tier }: { tier?: string }) {
   return (
     <div className="hole2-pause" aria-live="polite">
       <div className="hole2-pause__dim" aria-hidden="true" />
@@ -13,6 +13,11 @@ export function PauseOverlay() {
         <div className="hole2-pause__hint">
           press <kbd>Esc</kbd> to resume
         </div>
+        {tier && (
+          <div className="hole2-pause__hint">
+            quality: {tier.toUpperCase()} &mdash; re-pick before BEGIN to change
+          </div>
+        )}
       </div>
     </div>
   );

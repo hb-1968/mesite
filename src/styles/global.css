@@ -2485,6 +2485,68 @@ html.hole-exit-white-in::before {
 }
 .hole2-begin:focus-visible { outline: none; }
 
+/* perf toggle -- graphics-quality pills above the BEGIN box. shares the
+   begin box's arena-ready show / begun hide gates so it appears + leaves
+   with the call-to-action. gothic-mono register, red active/hover to
+   match .hole2-begin__label */
+.hole2-perf-toggle {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 11vh;
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  z-index: 14;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 520ms ease;
+}
+.hole2-stage[data-phase="arena"][data-arena-ready="true"]:not([data-begun="true"]) .hole2-perf-toggle {
+  opacity: 1;
+  pointer-events: auto;
+}
+.hole2-stage[data-begun="true"] .hole2-perf-toggle {
+  opacity: 0;
+  pointer-events: none;
+}
+.hole2-perf-toggle__label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.5);
+  padding-left: 0.34em;
+}
+.hole2-perf-toggle__pill {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  background: rgba(8, 6, 10, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  padding: 0.32em 0.6em;
+  cursor: pointer;
+  transition:
+    color 160ms linear,
+    border-color 180ms ease,
+    text-shadow 200ms ease;
+}
+.hole2-perf-toggle__pill:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.hole2-perf-toggle__pill[data-active="true"] {
+  color: #ff2a2a;
+  border-color: rgba(255, 42, 42, 0.6);
+  text-shadow: 0 0 8px rgba(255, 42, 42, 0.4);
+}
+.hole2-perf-toggle__pill:focus-visible {
+  outline: none;
+  border-color: rgba(255, 42, 42, 0.6);
+}
+
 /* player placeholder -- standin for the real player sprite until that's
    authored. positions just below the arena box on arena-ready, then
    slides up to settle near the bottom-middle of the inner playfield
@@ -4952,6 +5014,7 @@ html.hole-exit-white-in::before {
 }
 .hole2-admin__grid--phase  { grid-template-columns: repeat(4, 1fr); }
 .hole2-admin__grid--output { grid-template-columns: repeat(5, 1fr); }
+.hole2-admin__grid--perf   { grid-template-columns: repeat(4, 1fr); }
 .hole2-admin__toggles {
   display: flex;
   flex-direction: column;
