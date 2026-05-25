@@ -1,0 +1,1108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>wedge-impale demo (3 variants)</title>
+<style>
+  /* demo isolation for the player-anchored fourfold spear attack.
+     three variants live in this file:
+       1 -- singleton:  single cast, anchor tracks player
+       2 -- chain:      4 casts back-to-back, each re-anchors on player
+       3 -- spiral:     5 casts at fixed anchors tracing a spiral,
+                        lock angles rotated so safe gaps point along
+                        the spiral path the player has to follow
+     tunables for each variant live in the PATTERNS block in the script */
+  html, body { margin: 0; padding: 0; background: #0b0a0d; color: #d6d2c8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  body { min-height: 100vh; overflow: hidden; }
+
+  /* arena box -- same vh-driven proportions as the testbed inner box */
+  .arena {
+    position: fixed; left: 50%; top: 12vh;
+    transform: translateX(-50%);
+    width: 78vh; height: 80vh;
+    border: 1px dashed #2a2630;
+    background: radial-gradient(ellipse at center, #14121a 0%, #0b0a0d 70%);
+  }
+
+  /* player -- small dot, transform-driven motion (px-space, vh-scaled) */
+  .player {
+    position: absolute; left: 50%; top: 65%;
+    width: 1.6vh; height: 1.6vh;
+    margin-left: -0.8vh; margin-top: -0.8vh;
+    background: #f3eee2;
+    border-radius: 50%;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.4);
+    transform: translate(var(--px, 0px), var(--py, 0px));
+    will-change: transform;
+  }
+
+  /* triangle wedge -- isoceles, clip-path apex up. rotation steers the
+     apex toward the orbit anchor. solid black silhouette to match the
+     hole2 shadow-flagged hazard register. base anchor matches .player
+     so --sx/--sy translate values are deltas from the player home
+     point, not from the arena corner */
+  .spear {
+    position: absolute; left: 50%; top: 65%;
+    width: 2.6vh; height: 11vh;
+    margin-left: -1.3vh; margin-top: -5.5vh;
+    clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+    background: #000;
+    filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
+    transform: translate(var(--sx, 0px), var(--sy, 0px)) rotate(var(--sa, 0rad));
+    transform-origin: 50% 50%;
+    will-change: transform, opacity;
+    opacity: 0;
+  }
+  .spear[data-on="true"] { opacity: 1; }
+  /* engage telegraph -- subtle scale punch on lock-in. keeps the
+     all-black silhouette + reads as "click into place" */
+  .spear[data-locked="true"] {
+    transform: translate(var(--sx, 0px), var(--sy, 0px)) rotate(var(--sa, 0rad)) scale(1.08);
+  }
+  .spear[data-fading="true"] { transition: opacity 220ms ease-out; opacity: 0; }
+
+  /* tendril -- pure-black curved strand drawn with an SVG path.
+     overlays the arena, uses arena-pixel coordinates. the path itself
+     is a quadratic bezier that JS recomputes each frame to curve
+     between arena center and the player, with a wiggling control
+     point for organic motion. round line caps soften the endpoints */
+  .tendril {
+    position: absolute;
+    left: 0; top: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    opacity: 0;
+    z-index: 5;
+    overflow: visible;
+  }
+  .tendril[data-on="true"] { opacity: 1; }
+  .tendril path {
+    stroke: #000;
+    stroke-width: 1.1vh;
+    stroke-linecap: round;
+    fill: none;
+    filter:
+      drop-shadow(0 0 3px rgba(0, 0, 0, 0.9))
+      drop-shadow(0 0 12px rgba(0, 0, 0, 0.5));
+  }
+  /* sweep variant -- compact wedges. shorter than the original sweep
+     wedges (was 10vh) so each one only "occupies" a small radial slice
+     of the field. with tall wedges, every radius zone showed wedges
+     from many nearby radii overlaid -- the arms smeared into solid
+     coverage with no visible gaps. shorter wedges let the gap between
+     arms read at each radius. dropped further from 5vh to 3vh to fix
+     the innermost-radius corridor tightness without having to bring
+     the spiral inner edge closer to the player (that fix was tried
+     last turn -- it killed the breakout window).
+     filter: none -- overrides the base .spear drop-shadow. at 1000+
+     wedges, the per-frame drop-shadow filter was the dominant render
+     cost. solid black silhouette against the arena background reads
+     fine without the rim glow */
+  .spear[data-sweep="true"] {
+    width: 2vh;
+    height: 3vh;
+    margin-left: -1vh;
+    margin-top: -1.5vh;
+    filter: none;
+  }
+  /* reverse-burst ring wedges -- narrower than sweep wedges so 48-per-ring
+     leaves player-sized gaps even at smaller radii. touhou-style spacing:
+     dense bullet wall with just-threadable gaps. inherits data-sweep
+     styling (black silhouette, no filter) + overrides width/margin */
+  .spear[data-reverse="true"] {
+    width: 1.4vh;
+    height: 3vh;
+    margin-left: -0.7vh;
+    margin-top: -1.5vh;
+  }
+
+  /* hud overlay -- shows current pattern + each active instance's phase */
+  .hud {
+    position: fixed; left: 16px; top: 12px;
+    padding: 8px 12px;
+    background: rgba(20, 18, 26, 0.85);
+    border: 1px dashed #2a2630;
+    font-size: 12px; line-height: 1.5;
+    pointer-events: none;
+    white-space: pre;
+    min-width: 280px;
+  }
+  .controls { margin-top: 8px; color: #8b8478; font-size: 11px; }
+  kbd {
+    display: inline-block; padding: 1px 5px;
+    background: #1a181f; border: 1px solid #2a2630;
+    border-radius: 2px; font-size: 10px;
+  }
+</style>
+</head>
+<body>
+  <div class="arena" id="arena">
+    <div class="player" id="player"></div>
+    <svg class="tendril" id="tendril" aria-hidden="true">
+      <path id="tendril-path" d=""></path>
+    </svg>
+    <!-- spears spawn dynamically per-instance -->
+  </div>
+
+  <div class="hud" id="hud">pattern: idle
+  <div class="controls">
+    <kbd>arrows</kbd> move &nbsp; <kbd>1</kbd> singleton &nbsp; <kbd>2</kbd> chain &nbsp; <kbd>3</kbd> spiral &nbsp; <kbd>shift</kbd> clutch (slow-mo) &nbsp; <kbd>r</kbd> reset &nbsp; <kbd>a</kbd> auto-loop
+  </div></div>
+
+<script>
+'use strict';
+
+// ---- tunables -----------------------------------------------------------
+// shared across all variants
+const WEDGE_RADIUS_VH         = 18;     // orbit radius from anchor
+const WEDGE_DASH_MS           = 160;    // inward dash duration -- snappy
+const WEDGE_AFTERGLOW_MS      = 240;    // linger at center before fade
+const WEDGE_ORBIT_OMEGA       = (2 * Math.PI) / 1.8;  // rad/s
+const WEDGE_COUNT             = 4;      // fourfold skewer
+
+// per-variant config. orbitMs is the per-instance telegraph window;
+// castIntervalMs is the cadence between successive casts in a pattern
+const PATTERNS = {
+  singleton: {
+    name: 'singleton',
+    count: 1,
+    castIntervalMs: 0,
+    orbitMs: 2000,
+    anchorMode: 'player',     // tracks live player position during orbit
+    // lockAngle picks up the orbit's natural rotation -- no override
+  },
+  chain: {
+    name: 'chain',
+    count: 8,                 // 8 sequential casts. with castIntervalMs=900 the chain
+                              // lasts 7*900 + 1700 (last cast lifecycle) = ~8s. dense
+                              // pressure -- player gets contested every 900ms across
+                              // the full chain
+    castIntervalMs: 900,      // cast i+1 begins during cast i's orbit; overlap creates pressure
+    orbitMs: 1300,            // shorter than singleton -- chain leans on cadence, not telegraph
+    anchorMode: 'player-lead', // predictive snapshot: anchor at player + velocity*lead at cast spawn,
+                              // then fixed for the orbit. forces a moving player into the threat zone
+                              // instead of letting them outrun the live-track
+    leadMs:     600,          // how far ahead to predict. ~half the orbit window -- enough that a
+                              // sprinting player still gets contested without overshooting the arena
+  },
+  spiral: {
+    name: 'spiral',
+    variant: 'sweep',         // fullscreen choreographed sweep -- NOT multi-cast.
+                              // 4 spiral arms tile the whole arena; all wedges sweep
+                              // inward together over sweepMs. safe corridor between
+                              // arms traces a curved path the player must follow from
+                              // edge to center
+    // timing
+    telegraphMs: 1950,        // pre-sweep window. shortened -- less time before
+                              // tendril lets go. split: snag (150) + pull (500) +
+                              // formation (1000) + release (300) = 1950
+    telegraphSpinOmega: 0,    // disabled -- no more pre-sweep rotation. the menace
+                              // comes from the tendril and one-by-one wedge formation
+                              // not from a wind-up spin
+    snagMs:      150,         // tendril extends from center, attaches to player.
+                              // FAST snap -- the tendril whips out + catches the leg
+                              // instantly
+    pullMs:      500,         // player dragged to center. shortened from 800
+    formationMs: 1000,        // wedges materialize one-by-one. shortened from 1500 --
+                              // still enough time to see the wedges form sequentially
+                              // (outer to inner) without dragging the hold out
+    releaseMs:   300,         // tendril releases player before sweep starts. shortened
+                              // from 400 -- still gives a brief positioning window
+    sweepMs:     18000,       // outer wedges reach center at this time. tuned for
+                              // the exponential phase 3 curve below -- avg multiplier
+                              // during phase 3 is ~3.64x with m_peak=9 exponential,
+                              // which makes 5s of phase 3 cover the needed 39vh
+    sweepStopR_vh: 0,         // no inward despawn ring -- wedges sweep to r=0 and
+                              // become invisible when they reach center
+    sweepTransitionMs: 1670,  // sweep elapsed at which phase 1 (fast) ends. matches
+                              // when inner wedges arrive at center under the phase 1
+                              // rate (innerR=10 / 6 vh/s ≈ 1.67s)
+    sweepPhase1Multiplier: 1.67, // phase 1 wedges move 1.67x faster than the base
+                              // rates. inner during phase 1 = 3.6 * 1.67 = 6 vh/s
+    sweepPhase3StartMs: 13000, // sweep elapsed at which phase 3 (acceleration ramp)
+                              // kicks in. tuned so outer wedges (the "outermost
+                              // spindles") have entered the arena rectangle bounds
+                              // (~r=39vh) by this point. by then player has either
+                              // escaped or been killed -- safe to ramp velocity hard
+    sweepPhase3PeakMultiplier: 9.0, // phase 3 ACCELERATES along a TRUE exponential
+                              // curve m(t) = m_peak^(t/D) from 1x at start to 9x at
+                              // sweepMs. proper 2^t style growth -- doubling pattern,
+                              // not polynomial. velocity at 50% = ~3x, at 75% = ~5.2x,
+                              // at 100% = 9x. visibly steeper than the cubic version
+                              // toward the middle, with a similar dramatic finish
+    fadeMs:      400,         // post-impact fade
+    sweepInnerRate_vhs: 3.6,  // base inner wedge rate. 20% faster than the previous
+                              // 3 vh/s. effective phase 1 rate = 3.6 * 1.67 = 6 vh/s
+    sweepOuterRate_vhs: 2.2,  // base outer wedge rate. 20% faster than the previous
+                              // 1.8 vh/s. outer wedge travels 60vh (70 - spawn ring
+                              // at 10) at this rate after phase 1: ~25s. plus phase 1
+                              // 6vh covered in 1.7s = total ~26.7s, but sweepMs=22.5s
+                              // -- outer wedges still in transit at sweep end, cleared
+                              // when reverse takes over
+    // reverse phase -- layered ring burst, touhou-density:
+    reverseMs:        13000,  // total duration. extended further -- the rings need
+                              // more on-screen time so they're an actual sustained
+                              // threat at the radii they traverse, not a quick pulse
+    reverseLayers:    8,      // 8 concentric expanding rings -- doubled from 4 for
+                              // denser layered threat
+    reverseWedgesPerLayer: [32, 34, 36, 38, 40, 42, 45, 48], // per-layer wedge counts.
+                              // outer/faster layers slightly sparser, inner/slower
+                              // layers denser. interpolated across the 8 layers
+                              // between the old endpoints (32 outer to 48 inner)
+    reverseLayerSpeeds_vhs: [10, 9, 8.1, 7.3, 6.5, 5.9, 5.3, 4.8], // per-layer outward
+                              // steady-state speeds. each layer is 0.9x the previous
+                              // ("just slightly less than the initial of the prev").
+                              // gentle progression -- layer 7 (slowest) at 4.8 vh/s
+                              // still reaches arena border by ~6s under burst.
+                              // initial burst velocities (× 15) range from 150 vh/s
+                              // (layer 0) down to 72 vh/s (layer 7)
+    reverseLayerStartDelays_ms: [0, 0, 0, 0, 0, 0, 0, 0], // all rings fire immediately
+                              // on sphere moment. zero stagger -- the shock effect
+                              // of the reverse only lands if everything happens at
+                              // once, not in a slow staggered drumroll
+    reverseLayerRotation_deg: 3.75, // angular offset unchanged. half the 7.5deg
+                              // inter-wedge spacing -- alternating-position dodge
+                              // pattern preserved
+    reverseSpawnR_vh: 4,      // ring wedges spawn at this radius (matches sweepStopR
+                              // so the visual transition is continuous -- inward
+                              // sweep ends with wedges piled at r=4, reverse rings
+                              // spawn at r=4 and burst outward from there)
+    reverseBurstMultiplier: 15, // initial outward velocity multiplier on ring spawn.
+                              // bumped from 10 -- snap should genuinely launch the
+                              // rings. layer 0 now launches at 150 vh/s (was 60),
+                              // layer 3 at 60 vh/s (was 20). instant punch outward
+    reverseBurstTauMs: 200,   // exponential decay time constant. unchanged. at t=200ms
+                              // ~63% decayed, at t=600ms ~95% -- the burst is
+                              // essentially done in the first 600ms
+    // wedge field
+    arms:        8,           // 8 spiral arms. base spacing drops to 45deg. with
+                              // each arm spanning ~20deg of angular extent at any
+                              // radius zone, gaps between arms shrink to ~25deg --
+                              // the spiral fills more of the screen, tighter gaps
+                              // require precision threading
+    perArm:      150,         // wedges per arm. dropped from 250 -- inward sweep
+                              // was over-dense, particularly at outer rings where
+                              // the same wedge count was visually crammed. combined
+                              // with the sqrt radial distribution (see spawn loop)
+                              // the outer half of each arm gets ~75 wedges spread
+                              // across ~25vh of radial space (sparser), while the
+                              // inner half packs another ~75 into ~10vh (denser).
+                              // total: 4*150 = 600 wedges
+    outerR_vh:   70,          // pushed further past the arena edge (half-width ~39vh).
+                              // wedges between r=39 and r=70 are off-screen at spawn
+                              // and roll into the arena over the sweep -- keeps the
+                              // arena edge populated with threats longer (fixes the
+                              // "run to the edge and nothing's there" problem).
+                              // outer wedge enters the arena at (70-39)/1.8 = ~17s
+                              // into the sweep, supplying fresh edge threats well
+                              // into the second half of the move
+    innerR_vh:   10,          // innermost wedge starts 10vh from center. brought back
+                              // close to the player (was 20) so the initial spiral
+                              // sweep rotates tight around them rather than out at
+                              // arm's length. inner wedges sweep 6vh inward to the
+                              // spawn ring at r=4
+    // spiral shape
+    armPitch_deg:    2.2,     // angular offset per radial step. pinned at the limit
+                              // where outer arms stay solid -- at r=55, tangential
+                              // step = 55*2.2*pi/180 = 2.11vh ≈ wedge width 2vh.
+                              // any larger and the outer arms break into spokes
+                              // again. per-arm twist follows perArm: with perArm=250,
+                              // twist = 249*2.2 = 547deg ≈ 1.52 revolution -- arms
+                              // wrap a full revolution and a half, so the dodge
+                              // segment along the spiral is meaningfully longer
+    globalRotate_deg: 80,     // additional rotation of the WHOLE pattern over the
+                              // sweep duration. forces the safe corridor to drift
+                              // angularly as it shrinks radially -- player path is
+                              // a spiral in space-time, not just a straight radial
+    centerMode:  'arena',     // sweep stays centered on arena center regardless of
+                              // player position. previously followed player, but the
+                              // tendril already drags the player to arena center, so
+                              // any post-release movement should NOT carry the spiral
+                              // along -- player must dodge the now-static spiral
+  },
+};
+
+// ---- DOM + globals ------------------------------------------------------
+const arenaEl     = document.getElementById('arena');
+const playerEl    = document.getElementById('player');
+const tendrilEl   = document.getElementById('tendril');
+const tendrilPath = document.getElementById('tendril-path');
+const hudEl       = document.getElementById('hud');
+
+const player = { x: 0, y: 0, vx: 0, vy: 0 };  // pos + velocity (px, px/s)
+const PLAYER_SPEED_VH = 38;
+const keys = new Set();
+let autoLoop = false;
+let lastAutoTriggerT = 0;
+let lastAutoVariant = 'singleton';
+const AUTO_LOOP_GAP_MS = 1400;
+
+window.addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  keys.add(k);
+  if (k === '1') startPattern('singleton');
+  if (k === '2') startPattern('chain');
+  if (k === '3') startPattern('spiral');
+  if (k === ' ') { startPattern('singleton'); e.preventDefault(); }
+  if (k === 'r') resetAll();
+  if (k === 'a') autoLoop = !autoLoop;
+});
+window.addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+
+function vh() { return window.innerHeight / 100; }
+
+function arenaBounds() {
+  const w = arenaEl.clientWidth, h = arenaEl.clientHeight;
+  return {
+    minX: -w / 2 + 2 * vh(),
+    maxX:  w / 2 - 2 * vh(),
+    minY: -h * 0.65 + 2 * vh(),
+    maxY:  h * 0.35 - 2 * vh(),
+  };
+}
+
+// arena center, expressed in the same coord system as player.x/player.y
+// (deltas from the css-anchored player home at left:50%, top:65%).
+// horizontally same, vertically 15% of arena height above player home
+function arenaCenter() {
+  return { x: 0, y: -0.15 * arenaEl.clientHeight };
+}
+
+// ---- lance sfx ----------------------------------------------------------
+const lanceSfx = new Audio('../lance-skewer.ogg');
+lanceSfx.preload = 'auto';
+lanceSfx.volume  = 0.47;
+function playLanceSkewer() {
+  const a = lanceSfx.cloneNode(true);
+  a.volume = lanceSfx.volume;
+  a.play().catch(() => {});
+}
+
+// ---- spiral loop sfx ----------------------------------------------------
+// umilse_018 -- continuous ambient loop while the spiral is active.
+// single Audio instance with loop=true (not cloneNode) so play/pause work
+// cleanly. starts on pattern trigger, stops at the escape moment (handing
+// off to the escape sfx)
+const spiralSfx = new Audio('../umilse_018.ogg');
+spiralSfx.loop    = true;
+spiralSfx.preload = 'auto';
+spiralSfx.volume  = 0.5;
+function startSpiralLoop() {
+  spiralSfx.currentTime = 0;
+  spiralSfx.play().catch(() => {});
+}
+function stopSpiralLoop() {
+  spiralSfx.pause();
+}
+
+// ---- escape sfx (TBD) ---------------------------------------------------
+// fires once at the sphere->reverse transition -- the "twist" cue.
+// placeholder file path; Hunter to provide actual audio
+const escapeSfx = new Audio('../escape-twist.ogg');
+escapeSfx.preload = 'auto';
+escapeSfx.volume  = 0.6;
+function playEscapeSfx() {
+  escapeSfx.currentTime = 0;
+  escapeSfx.play().catch(() => {});
+}
+
+// ---- orb sfx ------------------------------------------------------------
+// fires once PER RING LAYER on its launch (not per individual wedge --
+// that'd be 32+ overlapping sounds per layer). when multiple layers fire
+// simultaneously (current delays are all 0), the per-layer plays stack
+// into a louder simultaneous orb-pop
+const orbSfx = new Audio('../sfx/orb.ogg');
+orbSfx.preload = 'auto';
+orbSfx.volume  = 0.5;
+function playOrbSfx() {
+  const a = orbSfx.cloneNode(true);
+  a.volume = orbSfx.volume;
+  a.play().catch(() => {});
+}
+
+// ---- pattern + instance state ------------------------------------------
+// pattern wraps the schedule (which casts have fired, which are pending).
+// each cast spawns an instance with its own 4 spear elements + lifecycle
+const pattern = {
+  key: null,           // 'singleton' | 'chain' | 'spiral' | null
+  config: null,
+  startT: 0,
+  nextCastIdx: 0,
+  fixedAnchors: null,  // for legacy multi-cast spiral (unused now)
+  // sweep variant -- single big choreographed pattern with no multi-cast
+  // scheduling. all wedges spawned upfront, lifecycle is shared
+  sweepWedges: [],     // [{ el, initialR, initialTheta }] -- inward-sweep wedges,
+                       // removed at the sphere moment when reverse phase begins
+  reverseWedges: [],   // [{ el, layer, theta }] -- ring wedges spawned at reverse
+                       // start, expand outward in 4 layered rings
+  sweepPhase:  'idle', // 'telegraph' | 'sweep' | 'reverse' | 'fade' | 'done'
+  sweepCenter: null,   // captured at telegraph->sweep transition for 'player' centerMode;
+                       // before lock, center tracks live; after lock, it sits here
+  escapeT:    0,       // pattern-elapsed ms at the sweep->reverse transition. anchors
+                       // the layered burst timing
+  firedLayers: null,   // Set of layer indices that have triggered their orb sfx.
+                       // populated at reverse start, drained as each layer launches
+  snagOriginX: 0,      // player position captured at snag moment (start of telegraph)
+  snagOriginY: 0,      // used for the pull animation -- lerp from origin to center
+};
+const instances = [];  // active instances; pruned when phase === 'done'
+
+function startPattern(key) {
+  if (pattern.key) return;  // refuse stacking patterns
+  const config = PATTERNS[key];
+  if (!config) return;
+  pattern.key          = key;
+  pattern.config       = config;
+  pattern.startT       = _gameNow();
+  pattern.nextCastIdx  = 0;
+  pattern.fixedAnchors = null;
+  pattern.sweepWedges  = [];
+  pattern.reverseWedges = [];
+  pattern.sweepPhase   = 'idle';
+  pattern.escapeT      = 0;
+
+  // sweep variant -- fullscreen choreographed pattern. spawn the entire
+  // wedge field upfront at initial spiral positions; updateSweepPattern
+  // owns the lifecycle from there
+  if (config.variant === 'sweep') {
+    const v = vh();
+    const armSpan = (2 * Math.PI) / config.arms;
+    const pitchRad = config.armPitch_deg * Math.PI / 180;
+    // capture player position at snag moment for the pull animation
+    pattern.snagOriginX = player.x;
+    pattern.snagOriginY = player.y;
+    for (let a = 0; a < config.arms; a++) {
+      for (let k = 0; k < config.perArm; k++) {
+        const tFrac = (config.perArm > 1) ? k / (config.perArm - 1) : 0;
+        const initialR = (config.outerR_vh + (config.innerR_vh - config.outerR_vh) * tFrac) * v;
+        const initialTheta = a * armSpan + k * pitchRad;
+        // formationT: time within formation phase when this wedge becomes
+        // visible. outer wedges (low k) appear first, progressively inward.
+        // gives a "spiral being drawn from the outside" feel
+        const formationT = tFrac * config.formationMs;
+        const el = document.createElement('div');
+        el.className = 'spear';
+        el.setAttribute('data-on', 'true');
+        el.setAttribute('data-sweep', 'true');
+        el.style.opacity = '0';  // hidden until formation phase reveals it
+        arenaEl.appendChild(el);
+        pattern.sweepWedges.push({ el, initialR, initialTheta, formationT });
+      }
+    }
+    pattern.sweepPhase = 'telegraph';
+    startSpiralLoop();
+    // initial frame placement so the telegraph reads immediately
+    updateSweepPattern(_gameNow());
+    return;
+  }
+
+  if (config.anchorMode === 'fixed-spiral') {
+    pattern.fixedAnchors = [];
+    const v    = vh();
+    const arms = config.spiralArms || 1;
+    for (let i = 0; i < config.count; i++) {
+      const arm       = i % arms;
+      const k         = Math.floor(i / arms);  // step within this arm
+      const armOffset = arm * ((2 * Math.PI) / arms);
+      const r         = (config.spiralBaseR_vh + k * config.spiralStepR_vh) * v;
+      const theta     = k * config.spiralStepTheta + armOffset;
+      const ax = player.x + r * Math.cos(theta);
+      const ay = player.y + r * Math.sin(theta);
+      // tangent direction -- the spiral's local tangent at this point.
+      // wedge cross has safe gaps at lockAngle + 45deg increments, so
+      // shifting lockAngle by pi/4 lines up a gap with the tangent.
+      // safe corridor through the chain follows the spiral curve
+      const tangent   = theta + Math.PI / 2;
+      const lockAngle = tangent - Math.PI / 4;
+      pattern.fixedAnchors.push({ x: ax, y: ay, lockAngle });
+    }
+  }
+}
+
+function resetAll() {
+  pattern.key    = null;
+  pattern.config = null;
+  for (const inst of instances) {
+    for (const el of inst.spears) el.remove();
+  }
+  instances.length = 0;
+  for (const w of pattern.sweepWedges) w.el.remove();
+  pattern.sweepWedges.length = 0;
+  for (const w of pattern.reverseWedges) w.el.remove();
+  pattern.reverseWedges.length = 0;
+  pattern.sweepPhase = 'idle';
+  stopSpiralLoop();
+  tendrilEl.setAttribute('data-on', 'false');
+}
+
+// instance factory. creates 4 spear elements + initial state
+function spawnInstance(castIdx) {
+  const cfg = pattern.config;
+  const inst = {
+    castIdx,
+    startT: _gameNow(),
+    phase:  'orbit',
+    anchorMode: cfg.anchorMode,
+    // anchor + lock state
+    anchorX: 0, anchorY: 0,
+    lockX:   0, lockY:   0,
+    lockAngle: 0,
+    fixedLockAngle: null,  // set for spiral
+    // dom
+    spears: [],
+  };
+  // fixed-spiral pre-baked anchor
+  if (cfg.anchorMode === 'fixed-spiral') {
+    const a = pattern.fixedAnchors[castIdx];
+    inst.anchorX = a.x;
+    inst.anchorY = a.y;
+    inst.fixedLockAngle = a.lockAngle;
+  } else if (cfg.anchorMode === 'player-lead') {
+    // predictive snapshot -- anchor at where the player will be after
+    // leadMs of their CURRENT velocity. anchor stays fixed for the
+    // orbit so the player can't dodge by reversing course mid-telegraph.
+    // clamp to arena bounds so a wall-sprint doesn't drop anchors out
+    // of reach
+    const leadMs = cfg.leadMs || 600;
+    const leadX  = (player.vx || 0) * (leadMs / 1000);
+    const leadY  = (player.vy || 0) * (leadMs / 1000);
+    const b = arenaBounds();
+    inst.anchorX = Math.max(b.minX, Math.min(b.maxX, player.x + leadX));
+    inst.anchorY = Math.max(b.minY, Math.min(b.maxY, player.y + leadY));
+  } else {
+    // 'player' -- live-tracked during orbit (singleton). seed at the
+    // current pos; updateInstance overwrites each frame in orbit phase
+    inst.anchorX = player.x;
+    inst.anchorY = player.y;
+  }
+  for (let i = 0; i < WEDGE_COUNT; i++) {
+    const el = document.createElement('div');
+    el.className = 'spear';
+    el.setAttribute('data-on', 'true');
+    el.setAttribute('data-locked', 'false');
+    el.setAttribute('data-fading', 'false');
+    arenaEl.appendChild(el);
+    inst.spears.push(el);
+  }
+  return inst;
+}
+
+// per-frame instance update. mutates phase, computes spear positions,
+// fires sfx on the orbit -> impale transition
+function updateInstance(inst, now) {
+  const cfg = pattern.config;
+  const elapsed   = now - inst.startT;
+  const tOrbit    = cfg.orbitMs;
+  const tImpale   = tOrbit + WEDGE_DASH_MS;
+  const tEnd      = tImpale + WEDGE_AFTERGLOW_MS;
+
+  // phase transitions
+  if (inst.phase === 'orbit' && elapsed >= tOrbit) {
+    inst.phase     = 'impale';
+    inst.lockX     = inst.anchorX;
+    inst.lockY     = inst.anchorY;
+    inst.lockAngle = (inst.fixedLockAngle != null)
+      ? inst.fixedLockAngle
+      : (elapsed / 1000) * WEDGE_ORBIT_OMEGA;
+    for (const el of inst.spears) el.setAttribute('data-locked', 'true');
+    playLanceSkewer();
+  }
+  if (inst.phase === 'impale' && elapsed >= tImpale) {
+    inst.phase = 'afterglow';
+    for (const el of inst.spears) el.setAttribute('data-fading', 'true');
+  }
+  if (inst.phase === 'afterglow' && elapsed >= tEnd) {
+    inst.phase = 'done';
+    for (const el of inst.spears) el.remove();
+    return;
+  }
+
+  // compute current anchor + angle + radius
+  let anchorX, anchorY, angleBase, r;
+  if (inst.phase === 'orbit') {
+    if (inst.anchorMode === 'player') {
+      anchorX = player.x;
+      anchorY = player.y;
+      inst.anchorX = anchorX;  // mirror so the lock step sees it
+      inst.anchorY = anchorY;
+    } else {
+      anchorX = inst.anchorX;
+      anchorY = inst.anchorY;
+    }
+    // orbit angle uses the instance's own elapsed time. spiral instances
+    // override at lock-in via fixedLockAngle, but the rotating telegraph
+    // still reads the same way
+    angleBase = (elapsed / 1000) * WEDGE_ORBIT_OMEGA;
+    r = WEDGE_RADIUS_VH * vh();
+  } else if (inst.phase === 'impale') {
+    anchorX = inst.lockX;
+    anchorY = inst.lockY;
+    angleBase = inst.lockAngle;
+    const k = (elapsed - tOrbit) / WEDGE_DASH_MS;
+    const e = k * k * k;  // easeInCubic -- accelerating thrust
+    r = WEDGE_RADIUS_VH * vh() * (1 - e);
+  } else {
+    anchorX = inst.lockX;
+    anchorY = inst.lockY;
+    angleBase = inst.lockAngle;
+    r = 0;
+  }
+
+  // place each spear
+  for (let i = 0; i < WEDGE_COUNT; i++) {
+    const a = angleBase + i * (2 * Math.PI / WEDGE_COUNT);
+    const sx = anchorX + r * Math.cos(a);
+    const sy = anchorY + r * Math.sin(a);
+    const rot = a - Math.PI / 2;  // apex points toward anchor
+    const el = inst.spears[i];
+    el.style.setProperty('--sx', sx + 'px');
+    el.style.setProperty('--sy', sy + 'px');
+    el.style.setProperty('--sa', rot + 'rad');
+  }
+}
+
+// ---- player motion ------------------------------------------------------
+function updatePlayer(dt) {
+  // spiral telegraph override -- tendril holds the player during snag,
+  // pull, and formation sub-phases. RELEASES during the final release
+  // sub-phase (before the inward sweep starts) so the player gets a
+  // moment of free movement to position themselves
+  if (pattern.key && pattern.config && pattern.config.variant === 'sweep' &&
+      pattern.sweepPhase === 'telegraph') {
+    const elapsed = _gameNow() - pattern.startT;
+    const cfg = pattern.config;
+    const center = arenaCenter();
+    const holdUntil = cfg.snagMs + cfg.pullMs + cfg.formationMs;
+    if (elapsed < holdUntil) {
+      player.vx = 0; player.vy = 0;
+      if (elapsed < cfg.snagMs) {
+        // snag: pinned at original position while tendril extends
+        player.x = pattern.snagOriginX;
+        player.y = pattern.snagOriginY;
+      } else if (elapsed < cfg.snagMs + cfg.pullMs) {
+        // pull: lerp from snag origin to arena center via smoothstep
+        const k    = (elapsed - cfg.snagMs) / cfg.pullMs;
+        const ease = k * k * (3 - 2 * k);
+        player.x = pattern.snagOriginX + (center.x - pattern.snagOriginX) * ease;
+        player.y = pattern.snagOriginY + (center.y - pattern.snagOriginY) * ease;
+      } else {
+        // formation: held at center while the spiral assembles around them
+        player.x = center.x;
+        player.y = center.y;
+      }
+      playerEl.style.setProperty('--px', player.x + 'px');
+      playerEl.style.setProperty('--py', player.y + 'px');
+      return;
+    }
+    // release sub-phase: tendril has let go. fall through to normal
+    // input -- player can move freely before the sweep commits
+  }
+  const sp = PLAYER_SPEED_VH * vh();
+  let mx = 0, my = 0;
+  if (keys.has('arrowleft'))  mx -= 1;
+  if (keys.has('arrowright')) mx += 1;
+  if (keys.has('arrowup'))    my -= 1;
+  if (keys.has('arrowdown'))  my += 1;
+  if (mx || my) {
+    const n = Math.hypot(mx, my);
+    player.vx = (mx / n) * sp;
+    player.vy = (my / n) * sp;
+  } else {
+    player.vx = 0;
+    player.vy = 0;
+  }
+  player.x += player.vx * dt;
+  player.y += player.vy * dt;
+  const b = arenaBounds();
+  player.x = Math.max(b.minX, Math.min(b.maxX, player.x));
+  player.y = Math.max(b.minY, Math.min(b.maxY, player.y));
+  playerEl.style.setProperty('--px', player.x + 'px');
+  playerEl.style.setProperty('--py', player.y + 'px');
+}
+
+// ---- sweep variant update ----------------------------------------------
+// fullscreen choreographed pattern. lifecycle:
+//   telegraph -- wedges sit at initial spiral positions, pattern spins
+//   sweep     -- all wedges sweep inward at their per-wedge rate
+//   reverse   -- (entered if player crosses outerR during sweep) wedges
+//                burst back outward fast from wherever they were at the
+//                escape moment. the "twist" -- spiral undoes itself
+//   fade      -- wedges fade out + are removed
+// the spiral loop sfx (umilse_018) starts on pattern trigger via
+// startSpiralLoop(), stops on escape via stopSpiralLoop() so the escape
+// sfx can take over without overlap
+function updateSweepPattern(now) {
+  const cfg = pattern.config;
+  const elapsed   = now - pattern.startT;
+  const tTelEnd   = cfg.telegraphMs;
+  const tSweepEnd = tTelEnd + cfg.sweepMs;
+  const tFadeEnd  = tSweepEnd + cfg.reverseMs + cfg.fadeMs;
+  const v         = vh();
+
+  // tendril -- SVG quadratic bezier from arena center to the player,
+  // with a perpendicular wiggling control point for organic curve.
+  // visible from snag through end of formation, hidden during release
+  const holdUntil = cfg.snagMs + cfg.pullMs + cfg.formationMs;
+  if (pattern.sweepPhase === 'telegraph' && elapsed < holdUntil) {
+    const arenaW = arenaEl.clientWidth;
+    const arenaH = arenaEl.clientHeight;
+    // arena center + player position in arena-pixel coords (SVG matches)
+    const cxA = arenaW * 0.5;
+    const cyA = arenaH * 0.5;
+    const pxA = arenaW * 0.5 + player.x;
+    const pyA = arenaH * 0.65 + player.y;
+    const dx = pxA - cxA;
+    const dy = pyA - cyA;
+    const dist = Math.hypot(dx, dy);
+    const ang  = Math.atan2(dy, dx);
+    const lenScale = (elapsed < cfg.snagMs) ? (elapsed / cfg.snagMs) : 1;
+    // minimum-length stump during formation (player at center, dist ~0)
+    const inFormation = elapsed >= cfg.snagMs + cfg.pullMs;
+    const drawDist = inFormation ? Math.max(dist * lenScale, 3 * v) : dist * lenScale;
+    // endpoint of the path in arena coords
+    const endX = cxA + drawDist * Math.cos(ang);
+    const endY = cyA + drawDist * Math.sin(ang);
+    // control point: perpendicular offset from midpoint, wiggles in time
+    // for organic motion (not a rigid straight rotation)
+    const mx = (cxA + endX) * 0.5;
+    const my = (cyA + endY) * 0.5;
+    const perpAng = ang + Math.PI * 0.5;
+    const wiggle = Math.sin(elapsed * 0.008) * 0.5 + Math.sin(elapsed * 0.013) * 0.5;
+    const curveOffset = drawDist * 0.22 * wiggle;
+    const cpX = mx + curveOffset * Math.cos(perpAng);
+    const cpY = my + curveOffset * Math.sin(perpAng);
+    tendrilPath.setAttribute('d', 'M ' + cxA + ' ' + cyA + ' Q ' + cpX + ' ' + cpY + ' ' + endX + ' ' + endY);
+    tendrilEl.setAttribute('data-on', 'true');
+  } else {
+    tendrilEl.setAttribute('data-on', 'false');
+  }
+
+
+  // phase transitions
+  if (pattern.sweepPhase === 'telegraph' && elapsed >= tTelEnd) {
+    pattern.sweepPhase = 'sweep';
+    if (cfg.centerMode === 'player') {
+      pattern.sweepCenter = { x: player.x, y: player.y };
+    }
+  }
+  // sweep -> reverse fires at sweep-end (the "sphere" moment when all
+  // wedges have converged at center). always triggers; no player-position
+  // escape detection. clears the sweep wedges + spawns a fresh field of
+  // ring wedges that will burst outward in layered rings
+  if (pattern.sweepPhase === 'sweep' && elapsed >= tSweepEnd) {
+    pattern.sweepPhase = 'reverse';
+    pattern.escapeT    = elapsed;
+    // remove all sweep wedges -- they've converged to r=0 and would
+    // be invisible anyway, but cleanup saves DOM nodes
+    for (const w of pattern.sweepWedges) w.el.remove();
+    pattern.sweepWedges.length = 0;
+    // spawn ring wedges. each layer has reverseWedgesPerLayer wedges at
+    // even angular spacing + a per-layer rotation offset so consecutive
+    // rings don't have aligned wedges (gaps offset between rings).
+    // reverseWedgesPerLayer is an array now -- per-layer wedge count so
+    // outer (faster-traveling) layers can be sparser
+    const layerOffsetRad = cfg.reverseLayerRotation_deg * Math.PI / 180;
+    for (let layer = 0; layer < cfg.reverseLayers; layer++) {
+      const ringWedgeCount     = cfg.reverseWedgesPerLayer[layer];
+      const ringAngularSpacing = (2 * Math.PI) / ringWedgeCount;
+      const baseOffset         = layer * layerOffsetRad;
+      for (let i = 0; i < ringWedgeCount; i++) {
+        const theta = i * ringAngularSpacing + baseOffset;
+        const el = document.createElement('div');
+        el.className = 'spear';
+        el.setAttribute('data-on', 'true');
+        el.setAttribute('data-sweep', 'true');
+        el.setAttribute('data-reverse', 'true');  // narrower than sweep wedges for touhou-tight gaps
+        arenaEl.appendChild(el);
+        pattern.reverseWedges.push({ el, layer, theta });
+      }
+    }
+    pattern.firedLayers = new Set();  // reset for per-layer orb sfx triggering
+    stopSpiralLoop();
+    playEscapeSfx();
+  }
+  // reverse -> fade after reverseMs of outward burst
+  if (pattern.sweepPhase === 'reverse' && elapsed >= pattern.escapeT + cfg.reverseMs) {
+    pattern.sweepPhase = 'fade';
+    for (const w of pattern.reverseWedges) w.el.setAttribute('data-fading', 'true');
+  }
+  if (pattern.sweepPhase === 'fade' && elapsed >= tFadeEnd) {
+    for (const w of pattern.sweepWedges)   w.el.remove();
+    pattern.sweepWedges.length = 0;
+    for (const w of pattern.reverseWedges) w.el.remove();
+    pattern.reverseWedges.length = 0;
+    pattern.sweepPhase = 'done';
+    lastAutoVariant = pattern.key;
+    pattern.key    = null;
+    pattern.config = null;
+    stopSpiralLoop();
+    return;
+  }
+
+  // staggered-rate sweep -- each wedge moves inward at its own linear
+  // rate (px/ms), interpolated by initialR. inner wedges sweep faster
+  // (close to center first, creating the inside-out wave), outer wedges
+  // sweep slower (linger as the threat from outside)
+  const innerR_px      = cfg.innerR_vh * v;
+  const outerR_px      = cfg.outerR_vh * v;
+  const radialSpan_px  = outerR_px - innerR_px;
+  const innerRatePx    = (cfg.sweepInnerRate_vhs * v) / 1000;
+  const outerRatePx    = (cfg.sweepOuterRate_vhs * v) / 1000;
+  // how long has the inward sweep been running (clamped at sweepMs for
+  // post-sweep phases other than reverse, since reverse uses its own
+  // distance-from-escape calc)
+  let sweepElapsedMs;
+  if      (pattern.sweepPhase === 'telegraph') sweepElapsedMs = 0;
+  else if (pattern.sweepPhase === 'sweep')     sweepElapsedMs = elapsed - tTelEnd;
+  else                                         sweepElapsedMs = cfg.sweepMs;
+  // three-phase sweep:
+  //   phase 1 (0 .. transitionMs): rates * phase1Multiplier (fast launch)
+  //   phase 2 (transitionMs .. phase3StartMs): rates * 1 (slow middle)
+  //   phase 3 (phase3StartMs .. sweepMs): rates grow EXPONENTIALLY from 1
+  //     to phase3PeakMultiplier. m(t) = m_peak^(t/D), proper 2^t style
+  //     compounding growth (not polynomial). visibly steeper progression
+  //     toward the end
+  // collapsed into a piecewise effective time so wedgeRate * effTime gives
+  // correct distance regardless of current phase. phase 3 uses the integral
+  // of the exponential velocity curve
+  const t1 = cfg.sweepTransitionMs;
+  const t2 = cfg.sweepPhase3StartMs;
+  const m1 = cfg.sweepPhase1Multiplier;
+  const m3peak = cfg.sweepPhase3PeakMultiplier;
+  const phase3Duration = cfg.sweepMs - t2;
+  let sweepEffTimeMs;
+  if (sweepElapsedMs <= t1) {
+    sweepEffTimeMs = sweepElapsedMs * m1;
+  } else if (sweepElapsedMs <= t2) {
+    sweepEffTimeMs = t1 * m1 + (sweepElapsedMs - t1);
+  } else {
+    // phase 3 -- exponential acceleration. m(t) = m_peak^(t/D)
+    // integrated from 0 to t: (D / ln(m_peak)) * (m_peak^(t/D) - 1)
+    const e = sweepElapsedMs - t2;
+    const d = phase3Duration;
+    const phase3EffTime = (d / Math.log(m3peak)) * (Math.pow(m3peak, e / d) - 1);
+    sweepEffTimeMs = t1 * m1 + (t2 - t1) + phase3EffTime;
+  }
+
+  // rotation runs continuously from trigger but at two different rates:
+  //   telegraph -- pattern spins at telegraphSpinOmega (~200deg/s by
+  //                default, matching singleton orbit). visible "winding
+  //                up" before the inward sweep commits.
+  //   sweep     -- pattern continues turning at the slower in-sweep rate
+  //                (globalRotate_deg / sweepMs), enough to drift the
+  //                safe corridor angularly so the player has to track it.
+  //   fade      -- rotation frozen at the impact pose.
+  // rotation accumulates -- the angle at sweep-start is the sum of all
+  // telegraph spin, NOT reset to 0
+  const telegraphSpinOmega = cfg.telegraphSpinOmega || 0;  // rad/s
+  const sweepRotRateMs     = (cfg.globalRotate_deg * Math.PI / 180) / cfg.sweepMs;  // rad/ms
+  const telegraphRotAtEnd  = (cfg.telegraphMs / 1000) * telegraphSpinOmega;
+  let globalRot;
+  if (pattern.sweepPhase === 'telegraph') {
+    globalRot = (elapsed / 1000) * telegraphSpinOmega;
+  } else {
+    // sweep, reverse, fade -- continuous rotation from telegraph baseline.
+    // reverse continues at the in-sweep rate so the outward burst still
+    // rotates with the field (spinning explosion vs frozen explosion)
+    globalRot = telegraphRotAtEnd + (elapsed - cfg.telegraphMs) * sweepRotRateMs;
+  }
+  // center: during telegraph, tracks the player live (the spiral
+  // follows you while it's still spawning, so you can't dodge by
+  // pre-positioning). once sweep begins, center is frozen at the
+  // captured sweepCenter -- relative motion returns + the player can
+  // navigate the rotating corridor. arena-centered mode is unchanged
+  let center;
+  if (cfg.centerMode === 'player') {
+    center = (pattern.sweepPhase === 'telegraph')
+      ? { x: player.x, y: player.y }
+      : pattern.sweepCenter;
+  } else {
+    center = arenaCenter();
+  }
+
+  // inward-sweep wedges (telegraph + sweep phases). during reverse/fade
+  // this array is empty (cleared at sweep->reverse transition), so the
+  // loop is a no-op. wedges sweep all the way to r=0 and become
+  // invisible there
+  const stopR_px = cfg.sweepStopR_vh * v;
+  // formation gating -- during telegraph, wedges remain hidden until
+  // their formationT has elapsed within the formation sub-phase
+  const formationStart   = cfg.snagMs + cfg.pullMs;
+  const formationElapsed = Math.max(0, elapsed - formationStart);
+  const inTelegraph      = (pattern.sweepPhase === 'telegraph');
+  for (const w of pattern.sweepWedges) {
+    if (inTelegraph && formationElapsed < w.formationT) {
+      w.el.style.opacity = '0';
+      continue;  // not yet formed
+    }
+    const normR     = (radialSpan_px > 0) ? (w.initialR - innerR_px) / radialSpan_px : 0;
+    const wedgeRate = innerRatePx + normR * (outerRatePx - innerRatePx);
+    const distance  = wedgeRate * sweepEffTimeMs;
+    const r         = Math.max(stopR_px, w.initialR - distance);
+    // hide wedges that have reached r=0 (the 3vh wedge would otherwise
+    // straddle center awkwardly)
+    if (r <= 0.01) {
+      w.el.style.opacity = '0';
+      continue;
+    }
+    w.el.style.opacity = '';
+    const theta = w.initialTheta + globalRot;
+    const sx    = center.x + r * Math.cos(theta);
+    const sy    = center.y + r * Math.sin(theta);
+    // apex points INWARD toward center (sweep is converging)
+    const rot = theta - Math.PI / 2;
+    w.el.style.setProperty('--sx', sx + 'px');
+    w.el.style.setProperty('--sy', sy + 'px');
+    w.el.style.setProperty('--sa', rot + 'rad');
+  }
+
+  // outward-burst ring wedges (reverse + fade phases). each layer has
+  // its own speed + launch delay + angular offset. wedges point OUTWARD
+  if (pattern.reverseWedges.length > 0) {
+    const tFromEscape = elapsed - pattern.escapeT;
+    // orb sfx per layer -- fires exactly once on each layer's launch
+    // (when tFromEscape crosses the layer's delay). pattern.firedLayers
+    // tracks which have already played
+    if (pattern.firedLayers) {
+      for (let layer = 0; layer < cfg.reverseLayers; layer++) {
+        if (!pattern.firedLayers.has(layer)) {
+          const layerDelay = cfg.reverseLayerStartDelays_ms[layer];
+          if (tFromEscape >= layerDelay) {
+            playOrbSfx();
+            pattern.firedLayers.add(layer);
+          }
+        }
+      }
+    }
+    for (const w of pattern.reverseWedges) {
+      const layerSpeedPx = (cfg.reverseLayerSpeeds_vhs[w.layer] * v) / 1000;  // px/ms
+      const layerDelay   = cfg.reverseLayerStartDelays_ms[w.layer];
+      const tEffective   = tFromEscape - layerDelay;
+      if (tEffective <= 0) {
+        // layer hasn't fired yet -- hide
+        w.el.style.opacity = '0';
+        continue;
+      }
+      w.el.style.opacity = '';
+      // rings spawn at reverseSpawnR (not r=0) so the eye around the
+      // player stays clear. velocity profile is exponential-decay:
+      //   v(t) = v_final + (v_initial - v_final) * exp(-t/tau)
+      // where v_initial = burstMult * v_final. integrated:
+      //   r(t) = spawnR + v_final*t + (v_initial-v_final) * tau * (1 - exp(-t/tau))
+      // sudden initial snap (~24 vh/s for layer 0), asymptotic to cruise
+      const spawnR_px   = cfg.reverseSpawnR_vh * v;
+      const burstMult   = cfg.reverseBurstMultiplier;
+      const tauMs       = cfg.reverseBurstTauMs;
+      const vFinal      = layerSpeedPx;         // px/ms
+      const vInitial    = vFinal * burstMult;
+      const decayPart   = 1 - Math.exp(-tEffective / tauMs);
+      const r = spawnR_px + vFinal * tEffective + (vInitial - vFinal) * tauMs * decayPart;
+      const theta = w.theta + globalRot;
+      const sx    = center.x + r * Math.cos(theta);
+      const sy    = center.y + r * Math.sin(theta);
+      // apex points OUTWARD: default apex direction is -y (angle -pi/2).
+      // we want apex to point at angle theta (outward from center).
+      // rotation = theta - (-pi/2) = theta + pi/2
+      const rot = theta + Math.PI / 2;
+      w.el.style.setProperty('--sx', sx + 'px');
+      w.el.style.setProperty('--sy', sy + 'px');
+      w.el.style.setProperty('--sa', rot + 'rad');
+    }
+  }
+}
+
+// ---- pattern scheduler --------------------------------------------------
+// spawns new instances when their scheduled cast time arrives. ends the
+// pattern when all instances have reached 'done' AND no more pending casts
+function updatePattern(now) {
+  if (!pattern.key) return;
+  const cfg = pattern.config;
+
+  // sweep variant has its own lifecycle path
+  if (cfg.variant === 'sweep') {
+    updateSweepPattern(now);
+    return;
+  }
+
+  // spawn any newly due casts
+  while (pattern.nextCastIdx < cfg.count) {
+    const dueAt = pattern.startT + pattern.nextCastIdx * cfg.castIntervalMs;
+    if (now >= dueAt) {
+      instances.push(spawnInstance(pattern.nextCastIdx));
+      pattern.nextCastIdx++;
+    } else {
+      break;
+    }
+  }
+
+  // tick + prune instances
+  for (let i = instances.length - 1; i >= 0; i--) {
+    updateInstance(instances[i], now);
+    if (instances[i].phase === 'done') instances.splice(i, 1);
+  }
+
+  // pattern done when all casts fired AND no live instances
+  if (pattern.nextCastIdx >= cfg.count && instances.length === 0) {
+    lastAutoVariant = pattern.key;  // remember for auto-loop
+    pattern.key    = null;
+    pattern.config = null;
+  }
+}
+
+// ---- main loop ---------------------------------------------------------
+// game time advances at timeScale per real ms. shift held = 0.3x speed
+// ("clutch" mode for precision testing -- lets you verify a pattern is
+// dodgeable by slowing the field to a crawl while keeping the geometry
+// identical). all pattern + instance timings reference gameTime, not
+// performance.now(), so the slow-mo propagates to wedge sweep rates,
+// orbit rotation, sweep progress, sfx interval -- everything is on the
+// same scaled clock
+let lastRealT = performance.now();
+let gameTime  = 0;
+let timeScale = 1;
+function _gameNow() { return gameTime; }
+
+function tick() {
+  const realNow = performance.now();
+  const realDt  = Math.min(50, realNow - lastRealT);  // ms, tab-switch clamp
+  lastRealT     = realNow;
+
+  // shift clutch
+  timeScale = keys.has('shift') ? 0.3 : 1;
+
+  const dtMs = realDt * timeScale;
+  gameTime  += dtMs;
+  const dt   = dtMs / 1000;
+  const now  = gameTime;
+
+  updatePlayer(dt);
+  updatePattern(now);
+
+  if (autoLoop && !pattern.key && (now - lastAutoTriggerT) > AUTO_LOOP_GAP_MS) {
+    // cycle through variants on auto-loop so the differences are visible
+    const order = ['singleton', 'chain', 'spiral'];
+    const idx = (order.indexOf(lastAutoVariant) + 1) % order.length;
+    startPattern(order[idx]);
+    lastAutoTriggerT = now;
+  }
+
+  // hud -- pattern + per-instance phase summary
+  let hud = 'pattern: ' + (pattern.key || 'idle');
+  if (pattern.key && pattern.config.variant === 'sweep') {
+    hud += '  phase: ' + pattern.sweepPhase + '  wedges: ' + (pattern.sweepWedges.length + pattern.reverseWedges.length);
+  } else if (pattern.key) {
+    hud += '  cast ' + pattern.nextCastIdx + '/' + pattern.config.count;
+  }
+  if (instances.length) {
+    hud += '\nactive: ' + instances.map(i => i.castIdx + ':' + i.phase).join(', ');
+  }
+  if (autoLoop) hud += '\n[auto-loop on]';
+  if (timeScale < 1) hud += '\n[clutch ' + timeScale.toFixed(2) + 'x]';
+  hudEl.firstChild.textContent = hud + '\n';
+
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

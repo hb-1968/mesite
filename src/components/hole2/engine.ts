@@ -32,7 +32,7 @@ export type Hole2EngineOpts = {
   // keyboard unlock -- both can coexist, neither implies the other
   onAdminUnlock?: (api: Hole2EngineHandle) => void;
   // fired whenever the fight resets to phase 1 -- either the player
-  // ran out of lives OR the dev pressed `r`. lifted by the React layer
+  // ran out of lives OR they pressed `r`. lifted by the React layer
   // to restart the boss music from the top, since the track is phase-
   // synced and would otherwise drift relative to the fresh fight
   onFightReset?: () => void;
@@ -54,6 +54,13 @@ export type Hole2EngineOpts = {
 export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // eslint-disable-next-line no-console
   console.log('[hole2] startHole2Engine -- new engine instance booting');
+  // eslint-disable-next-line no-console
+  console.warn('[hole2-sync] ENGINE BOOT -- onPhaseChange present?', !!opts.onPhaseChange, 'keys:', Object.keys(opts).join(','));
+  // capture the handler in a local var at boot -- if at fire-time the
+  // captured local works but opts.onPhaseChange doesn't, opts has been
+  // mutated between boot and fire. should never happen with a normal
+  // React-passed props object but worth ruling out
+  const _bootCapturedOnPhaseChange = opts.onPhaseChange;
   // sfx live under /public/sfx/ in production (copied from /testbed/sfx/
   // and /testbed/ root). use BASE_URL so the same paths work for the
   // GH Pages build at /mesite/ and the dev server at /
@@ -116,6 +123,12 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   const state = {
     playerX: 0,           // px offset from arena center (horizontal)
     playerY: 0,           // px offset from default top (vertical)
+    facing: 'idle' as 'idle' | 'left' | 'right',
+                          // mirrored to .player[data-facing] -- css
+                          // picks which of 3 player-*.png imgs paints
+    lastFacing: 'idle' as 'idle' | 'left' | 'right',
+                          // only writes to the dom when changes, saves
+                          // the per-frame attribute thrash
     bombs:   3,
     hits:    5,
     boss:    1.0,         // 0..1 fraction
@@ -207,11 +220,38 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
                                //   { el, x1, y1, x2, y2, thickness, dirRad } in arena px
     snakeGrid:           null, // 12x12 Int16Array of trail-density per cell
     snakeGridCfg:        null, // { cols, rows, cellW, cellH, originX, originY, thickness } cached
-    nextSnakeTrickleT:   0,    // ms timestamp; next continuous-spawn prong fires when t >= this
+    nextSnakeBranchT:    0,    // ms timestamp; next deterministic-branch step fires when t >= this
+    snakeBranchIdx:      0,    // monotonic counter; deterministic tiebreaker for perpendicular side
+    phase8InitialsRetired: false, // flips true once all 4 INIT_PRONGS terminate; gates branching
     activeProgram:       [],   // current section list driving pattern_phase3b. set
                                //   in setPhase per phase (PHASE_3_PROGRAM, PHASE_4_PROGRAM,
                                //   PHASE_5_PROGRAM, ...). empty list = no program-driven
                                //   sections this phase
+    // ---- spiral attack (phase 7a finale) ---------------------------------
+    // all state below is scoped to the spiral attack ONLY. nothing in this
+    // block is read or written outside spiral-specific code. clearSpiral()
+    // is the single cleanup entrypoint, called from setPhase + resetFight
+    spiralPhase:         'idle', // 'idle' | 'telegraph' | 'sweep' | 'reverse' | 'fade' | 'done'
+    spiralStartT:        0,    // ms timestamp when the spiral attack section begins
+    spiralEscapeT:       0,    // ms timestamp at sweep->reverse (sphere moment)
+    spiralWedges:        [],   // [{ el, initialR, initialTheta, formationT }] -- inward sweep wedges
+    spiralReverseWedges: [],   // [{ el, layer, theta }] -- outward burst ring wedges
+    spiralFiredLayers:   null, // Set<number> -- which layers have already triggered orb sfx
+    spiralSnagOriginX:   0,    // player position captured at snag moment for the pull lerp
+    spiralSnagOriginY:   0,
+    spiralTendrilSvg:    null, // SVG element overlaying the arena (created lazily)
+    spiralTendrilPath:   null, // <path> child of the svg, gets its d= rewritten each frame
+    // ---- wedge-impale (singleton in phase 1, chain in phase 3 interlude) ----
+    // separate from spiral. each "instance" is one cast (4 spears that orbit
+    // the player then dash inward). singleton fires recurring single casts.
+    // chain fires 8 sequential casts then stops. clearWedgeImpale() handles
+    // cleanup on phase change
+    wiKind:        null, // 'singleton' | 'chain' | null
+    wiStartT:      0,    // when current pattern started
+    wiNextCastT:   0,    // when next cast spawns
+    wiCastCount:   0,    // chain: number of casts spawned so far (cap at WI_CHAIN_COUNT)
+    wiInstances:   [],   // [{ spears, startT, orbitMs, anchorMode, anchorX, anchorY,
+                         //    phase: 'orbit'|'dash'|'fade'|'done', lockX, lockY, lockAngle }]
     interludeSineStartT: 0,     // ms timestamp; sine drift during interlude clocks off this
                                 //   so sine(0) = (0,0) and the position lands smoothly where
                                 //   the entry-glide deposited the boss
@@ -497,7 +537,7 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // shadow-orb cruise speed per pattern. launch speed = BULLET_INIT_BOOST
   // * this; bullets decay to the listed value within BULLET_DECAY_MS
   const ORB_SPEED_DIAGONAL_VH = 18;
-  const ORB_SPEED_WEDGE_VH    = 20;
+  const ORB_SPEED_WEDGE_VH    = 10;  // dropped from 20 -- bloom decay (BULLET_INIT_BOOST 2.2, BULLET_DECAY_MS 280) lands on a near-stall by the time the cone reaches the bottom of the arena. applies to both phase 1 + phase 3 interlude wedge calls (player has to weave through the spread instead of just escaping it via wall-of-speed)
   const ORB_SPEED_SPIRAL_VH   = 14;
 
   // diagonal pattern -- 9-orb row per volley, alternating left/right.
@@ -830,6 +870,13 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   const PHASE_5B_GATE_MAX_COUNT        = 5;     // hard cap; brief overshoot allowed
   const PHASE_5B_GATE_SPAWN_PROB_UNDER = 0.12;  // P(spawn) per frame when active < target
   const PHASE_5B_GATE_SPAWN_PROB_AT    = 0.025; // P(spawn) per frame when active == target
+  // aim degrades over the section -- each line picks up a random angular
+  // offset, scaled by elapsed section progress raised to the curve below.
+  // early volleys still snap to the player; by section end the offset
+  // spans the full circle so lines flick off in essentially random
+  // directions. 180 = uniform-around-the-gate at progress 1
+  const PHASE_5B_AIM_JITTER_MAX_DEG    = 180;   // peak per-line offset (uniform +/-) at section end
+  const PHASE_5B_AIM_JITTER_CURVE      = 1.4;   // >1 keeps the opening clean, ramps wildness in mid-section
 
   const PHASE_5_PROGRAM = [
     { kind: 'lance',      dirRad: -Math.PI / 2,     durMs: 6000 },   // 3:11 -- from below
@@ -886,6 +933,13 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // barrage; alternates back through split-crosses + closes on a
   // climax that layers all three on top of each other
   const PHASE_6_VOLLEY_INTERVAL_MS  = 2500;   // gap between staggered split-cross spawns
+  // intro-volley burst behavior -- when a section sets burstSize, the
+  // dispatcher fires that many crosses tight (BURST_GAP_MS apart),
+  // then waits BURST_INTERBURST_MS before the next burst. used by the
+  // 4:02 intro to read as "three rapid groups of three" instead of a
+  // metronomic drip
+  const PHASE_6_BURST_GAP_MS         = 90;    // within-burst spacing
+  const PHASE_6_BURST_INTERBURST_MS  = 1300;  // gap between bursts
   // climax cadence -- opens with a HEAVIER split-cross barrage that
   // ramps down to the steady rate over CLIMAX_RAMP_MS. heavy + steady
   // are the interval bounds; the per-frame dispatch lerps between
@@ -901,10 +955,10 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   const PHASE_6_CLIMAX_FRONT2_T_MS    = 6500;   // second front-tower wave
   const PHASE_6_CLIMAX_REAR2_T_MS     = 9000;   // second rear-tower wave
   const PHASE_6_PROGRAM = [
-    { kind: 'split-cross-volley', count: 3, durMs: 8000 },   // 4:02 -- intro the splitting beams
+    { kind: 'split-cross-volley', count: 9, burstSize: 3, durMs: 8000 },   // 4:02 -- intro: 3 rapid bursts of 3 split crosses
     { kind: 'cursor-volley',                durMs: 6000 },   // 4:10 -- stacked cursor teeth
     { kind: 'tower-barrage',                durMs: 8000 },   // 4:16 -- front + rear towers
-    { kind: 'split-cross-volley', count: 4, durMs: 9000 },   // 4:24 -- escalated split crosses
+    { kind: 'split-cross-volley', count: 12, burstSize: 3, durMs: 9000 },  // 4:24 -- escalated: 4 rapid bursts of 3
     { kind: 'cursor-volley',                durMs: 6500 },   // 4:33 -- another teeth round
     { kind: 'climax',                       durMs: 12500 }   // 4:39.5 -- everything layered
   ];
@@ -960,24 +1014,82 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
                                                           //   figure from collapsing to a
                                                           //   straight line at t=0
 
+  // ---- WEDGE-IMPALE constants (singleton + chain variants) -------------
+  // singleton fires recurring single 4-spear casts (phase 1 second wedge
+  // block). chain fires 8 sequential 4-spear casts (phase 3 interlude).
+  // shared core: 4 spears spawn orbiting the player at WI_RADIUS_VH, orbit
+  // for orbitMs, lock + dash inward, fade
+  const WI_RADIUS_VH              = 18;     // orbit radius from anchor
+  const WI_DASH_MS                = 160;    // inward dash duration
+  const WI_FADE_MS                = 240;    // post-dash fade
+  const WI_ORBIT_OMEGA            = (2 * Math.PI) / 1.8;  // rad/s
+  const WI_COUNT                  = 4;      // spears per cast
+  // singleton: 4-spear cast every ~2.7s
+  const WI_SINGLETON_ORBIT_MS     = 2000;
+  const WI_SINGLETON_CAST_GAP_MS  = 700;    // gap after each cast finishes
+  // chain: 8 casts back-to-back at 900ms cadence, shorter orbit per cast
+  const WI_CHAIN_COUNT            = 8;
+  const WI_CHAIN_CAST_INTERVAL_MS = 900;
+  const WI_CHAIN_ORBIT_MS         = 1300;
+
+  // ---- SPIRAL attack constants (phase 7a finale) ----------------------
+  // ported from testbed/demos/wedge-impale-demo.html. all isolated to
+  // SPIRAL_* prefix. centerMode is implicitly 'arena' here (engine uses
+  // INNER_BOX center; spiral never follows player after release)
+  // sub-phase durations (telegraph splits into snag + pull + formation + release)
+  const SPIRAL_SNAG_MS              = 150;
+  const SPIRAL_PULL_MS              = 500;
+  const SPIRAL_FORMATION_MS         = 1000;
+  const SPIRAL_RELEASE_MS           = 300;
+  const SPIRAL_TELEGRAPH_MS         = SPIRAL_SNAG_MS + SPIRAL_PULL_MS + SPIRAL_FORMATION_MS + SPIRAL_RELEASE_MS; // 1950ms
+  // sweep phase (3-segment piecewise speed: phase1 fast, phase2 base, phase3 exponential ramp)
+  const SPIRAL_SWEEP_MS             = 18000;
+  const SPIRAL_SWEEP_TRANSITION_MS  = 1670;
+  const SPIRAL_SWEEP_PHASE1_MULT    = 1.67;
+  const SPIRAL_SWEEP_PHASE3_START_MS = 13000;
+  const SPIRAL_SWEEP_PHASE3_PEAK_MULT = 9.0;
+  const SPIRAL_SWEEP_INNER_RATE_VHS = 3.6;
+  const SPIRAL_SWEEP_OUTER_RATE_VHS = 2.2;
+  // reverse phase (8 layered concentric rings burst outward)
+  const SPIRAL_REVERSE_MS           = 13000;
+  const SPIRAL_FADE_MS              = 400;
+  const SPIRAL_REVERSE_LAYERS       = 8;
+  const SPIRAL_REVERSE_WEDGES_PER_LAYER = [32, 34, 36, 38, 40, 42, 45, 48];
+  const SPIRAL_REVERSE_LAYER_SPEEDS_VHS = [10, 9, 8.1, 7.3, 6.5, 5.9, 5.3, 4.8];
+  const SPIRAL_REVERSE_LAYER_DELAYS_MS  = [0, 0, 0, 0, 0, 0, 0, 0];
+  const SPIRAL_REVERSE_LAYER_ROTATION_DEG = 3.75;
+  const SPIRAL_REVERSE_SPAWN_R_VH   = 4;
+  const SPIRAL_REVERSE_BURST_MULT   = 15;
+  const SPIRAL_REVERSE_BURST_TAU_MS = 200;
+  // wedge field geometry
+  const SPIRAL_ARMS                 = 8;
+  const SPIRAL_PER_ARM              = 150;
+  const SPIRAL_OUTER_R_VH           = 70;
+  const SPIRAL_INNER_R_VH           = 10;
+  const SPIRAL_STOP_R_VH            = 0;
+  const SPIRAL_ARM_PITCH_DEG        = 2.2;
+  const SPIRAL_GLOBAL_ROTATE_DEG    = 80;
+
   // phase 7a runs 4:56 -> 5:46 = 50s. with the 2s title-card overlay
-  // at entry, programmed content fits in 48s + ~0s headroom. sections
-  // tightened from the original 60s plan
+  // at entry, programmed content fits in 48s. spiral is now the final
+  // section -- replaces the second lance wave, the orb-tower wave,
+  // the climax, AND the tail end of the lance intro
   const PHASE_7_PROGRAM = [
     // 4:58 -- two roaming towers (standard tooth payload)
     { kind: 'tower-roam-wave',  count: 2, variant: 'teeth', durMs:  9000 },
-    // 5:07 -- puddle-lance intro at the comfortable cadence
-    { kind: 'puddle-lance-wave', interval: PHASE_7A_PUDDLE_INTERVAL_MS, durMs: 10000 },
-    // 5:17 -- escalated roaming towers, orb payload for variety
-    { kind: 'tower-roam-wave',  count: 3, variant: 'orbs',  durMs:  9000 },
-    // 5:26 -- denser puddle spray
-    { kind: 'puddle-lance-wave', interval: PHASE_7A_PUDDLE_DENSE_MS,    durMs: 10000 },
-    // 5:36 -- climax: both layered, towers walking + puddles spraying
-    { kind: 'phase7a-climax',                                           durMs:  8000 }
-    // ends at 5:44, leaving 2s headroom into the 5:46 phase 8 boundary
+    // 5:07 -- puddle-lance intro at the comfortable cadence. TRUNCATED
+    // from 10s to 6s -- the back 4s of the intro are absorbed by the
+    // spiral's snag (the tendril yanking the player breaks the lance
+    // cadence anyway)
+    { kind: 'puddle-lance-wave', interval: PHASE_7A_PUDDLE_INTERVAL_MS, durMs: 6000 },
+    // 5:13 -- SPIRAL: final section of 7a. tendril snags player +
+    // pulls to center; spiral wedges form one-by-one; inward sweep
+    // with two-phase acceleration; sphere collapse; layered ring
+    // burst. ends at 5:46 = phase boundary
+    { kind: 'spiral',                                                   durMs: 33000 }
   ];
 
-  // phase 7b TODESREIGEN + UNTERGANG -- SHADE'S EMBRACE + DEATHTHROES. the pair of ultimates.
+  // phase 7b TODESREIGEN + UNTERGANG -- SHADE'S EMBRACE + SHADOWS IN SHADOWS. the pair of ultimates.
   //   shade's embrace: in lore a sphere of shadow that wraps the
   //     player and pries them apart from inside, like an iron maiden
   //     -- "embrace" carries the iron-maiden idiom + the vampire-
@@ -996,11 +1108,26 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   //     side, so the chain of escapes isn't a single repeating motion.
   //     survivable -- player outpaces the shrink, and a hit by one
   //     ring is one damage hit, not a chain-end
-  //   deaththroes: snake-curve trails seek the player + multiply over
-  //     time, like a hilbert curve filling space. each snake stops
-  //     when its head hits a trail (own or another). leading snakes
-  //     into self-collision is the only escape -- if the boss isn't
-  //     killed by the timer, the arena fills entirely
+  //   deaththroes: 4 SEED snakes go straight in fixed directions --
+  //     1 LEFT + 1 RIGHT from boss center along the boss row, plus
+  //     2 going DOWN spawned one row below boss center in ADJACENT
+  //     cells (the "two in the middle" -- attached, not separated,
+  //     so the arena doesn't read as 4 quadrants). all movement is
+  //     fully DETERMINISTIC: snakes don't turn. each one terminates
+  //     when its head leaves the inner box or enters a cell another
+  //     snake already filled (head clamps flush with the wall/cell
+  //     boundary so trails meet without slivers).
+  //     DETERMINISTIC GREEDY BISECTION kicks in only ONCE ALL 4
+  //     SEEDS HAVE TERMINATED. each BRANCH_MS, branchOneSnake does
+  //     a look-ahead across (trail, u in U_CANDIDATES, perp side)
+  //     triples, predicting how far a perpendicular branch would
+  //     extend before hitting a wall or filled cell. the LONGEST
+  //     predicted branch wins -- so spawns naturally land at trail
+  //     ENDS facing open arena and run all the way to the wall,
+  //     not at midpoints where they'd stop halfway. tiebreak:
+  //     lower bisectionCount first (fair distribution), then
+  //     iteration order. no Math.random anywhere -- same input
+  //     produces the same arena fill every run
   //
   // boss is hittable + the hud stays visible across BOTH spells, so
   // damage dealt in shade's embrace persists into deaththroes
@@ -1019,41 +1146,57 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   const PHASE_7B_MAIDEN_SPIKE_WIDTH_VH       = 3.0;   // along-edge width (un-scaled)
   const PHASE_7B_MAIDEN_SPIKE_LENGTH_VH      = 4.0;   // perpendicular length (un-scaled)
   const PHASE_7B_MAIDEN_BOX_COLLAPSE_MS      = 280;   // fade window for a vanishing box
-  // deaththroes snake pacing. movement is GRID-ALIGNED -- each snake
-  // walks straight at constant speed, only deciding to turn when its
-  // head crosses into a new cell of a 14x14 grid covering the inner
-  // box. each turn picks the neighbor cell with the LOWEST trail
-  // density (the AVOIDANCE POLICY), so the emergent pattern reads as
-  // a hilbert / lawn-mower fill spreading across the arena.
+  // deaththroes snake pacing. movement is GRID-ALIGNED and
+  // STRAIGHT-ONLY -- each snake walks at constant speed in its
+  // spawn direction and never turns. when the head crosses into a
+  // new cell of the 12x12 grid covering the inner box, the snake
+  // terminates if that cell is out-of-box OR already filled by
+  // any snake (own start cell included for safety, though no
+  // snake re-enters its own start cell while going straight).
   //
-  // snakes are IMMORTAL -- they don't self-kill on contact. player
-  // contact damages the player, not the snake. trail thickness =
-  // max(cellW, cellH) (set in initSnakeGrid) so every cell a snake
-  // passes through gets filled border-to-border with NO surviving
-  // gap at the arena edge. tuned so the 4 prongs from boss saturate
-  // the 144-cell grid in ~22s of practical filling, fitting the 24s
-  // section budget. the board "clears" right as the timer expires
-  const PHASE_7B_SNAKE_SPEED_VH       = 9;        // slower so the rapid trickle doesn't blow
-                                                   //   past the 24s budget; constant pop-in is
-                                                   //   the headline feature now, not raw fill
-  const PHASE_7B_SNAKE_THICKNESS_VH   = 1.6;      // fallback only -- initSnakeGrid overrides
-                                                   //   with cellW (filling the cell fully)
-  const PHASE_7B_SNAKE_GRID_CELLS     = 12;       // 12x12 = 144 cells, cells ~6.5vh wide
-  const PHASE_7B_SNAKE_FORWARD_BONUS  = 0.4;      // tiebreak weight that prefers continuing
-                                                   //   straight (so snakes commit to lanes when
-                                                   //   neighbor fillness ties)
-  // 4 prong directions for the initial snake spawn from the boss.
-  // cardinals so the spread is symmetric across the arena -- the N
-  // prong reflexes off the ceiling quickly, the others have room
-  const PHASE_7B_SNAKE_PRONG_DIRS = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
-  // continuous trickle -- after the initial 4, one extra prong spawns
-  // from the boss every TRICKLE_MS in a random cardinal. CONSTANT
-  // POP-IN is the design goal: a new snake every ~500ms with a
-  // generous cap so the field stays dense, and the spirit bomb
-  // explicitly does NOT clear them (snakes are the inevitability
-  // of the deaththroes, not a clearable hazard)
-  const PHASE_7B_SNAKE_TRICKLE_MS     = 500;
-  const PHASE_7B_SNAKE_MAX_COUNT      = 16;
+  // trail thickness = max(cellW, cellH) (set in initSnakeGrid) so
+  // every cell a snake passes through gets filled border-to-border,
+  // no surviving gap at the arena edge. terminated trails stay
+  // hot for player collision -- the obstacle persists for the
+  // remainder of the section
+  const PHASE_7B_SNAKE_SPEED_VH       = 9;        // constant lane speed
+  const PHASE_7B_SNAKE_THICKNESS_VH   = 1.6;      // fallback -- initSnakeGrid overrides with cellW
+  const PHASE_7B_SNAKE_GRID_CELLS     = 12;       // 12x12 = 144 cells, ~6.5vh per cell
+  // initial 4-snake configuration. all go STRAIGHT in their spawn
+  // direction until they hit a wall or another snake's fill. the
+  // LEFT/RIGHT pair shares the boss row -- they're aimed at the
+  // outermost edges so the top bar fills wall-to-wall. the two
+  // "middle" DOWN snakes land in ADJACENT cells (no gap between
+  // them) so they read as a single 2-cell strip rather than two
+  // separated columns -- avoids the 4-region split the storyboard
+  // explicitly wanted to avoid. oyVh +7 drops them one row below
+  // boss center so they don't collide with LEFT/RIGHT on the
+  // boss row (which would terminate them after a single cell)
+  const PHASE_7B_SNAKE_INIT_PRONGS = [
+    { oxVh:   0, oyVh: 0, dir: Math.PI     }, // LEFT from boss center -> outermost left edge
+    { oxVh:   0, oyVh: 0, dir: 0           }, // RIGHT from boss center -> outermost right edge
+    { oxVh:  -3, oyVh: 7, dir: Math.PI / 2 }, // DOWN, mid-left (adjacent to mid-right)
+    { oxVh:   3, oyVh: 7, dir: Math.PI / 2 }  // DOWN, mid-right
+  ];
+  // deterministic bisection. fires only AFTER all 4 initial seeds
+  // have terminated -- the section opens with a clean skeleton,
+  // then each branch step picks the terminated trail with the
+  // LOWEST bisectionCount (ties broken by spawn order = oldest
+  // first). each trail can be bisected MAX_BISECTIONS times, at
+  // u positions [0.5, 0.25, 0.75] -- midpoint first, then quarters.
+  // multi-bisection + the tight cadence below is what gets the
+  // arena filled before the 24s timer hits 00:00
+  const PHASE_7B_SNAKE_BRANCH_MS      = 200;
+  const PHASE_7B_SNAKE_MAX_COUNT      = 128;
+  // u-candidates evaluated at every branch step. branchOneSnake
+  // does a greedy look-ahead across (trail, u, perp-side) tuples
+  // and picks the one with the LONGEST predicted perpendicular
+  // branch -- so each spawned snake extends fully to the next wall
+  // or trail instead of stopping randomly midway. the endpoints
+  // (u=0 and u=1) are included so wall-end bisections (which lay
+  // along the side edges) are reachable
+  const PHASE_7B_U_CANDIDATES         = [0, 0.25, 0.5, 0.75, 1];
+  const PHASE_7B_MAX_BISECTIONS       = 5;
 
   // phase 7b boss MOVEMENT -- still, but hovering. zero horizontal
   // drift, tiny vertical bob in y so the boss reads as alive rather
@@ -1177,6 +1320,20 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     const a = lanceSkewerSfx.cloneNode(true);
     a.volume = lanceSkewerSfx.volume;
     a.play().catch(() => {});
+  }
+  // spiral-loop sfx -- umilse_018, continuous loop during the spiral
+  // telegraph + sweep. single Audio instance (loop=true). started in
+  // spawnSpiral, stopped in clearSpiral / sphere-moment transition
+  const spiralLoopSfx = _audio(SFX_BASE + 'spiral-loop.ogg');
+  spiralLoopSfx.preload = 'auto';
+  spiralLoopSfx.loop    = true;
+  spiralLoopSfx.volume  = 0.45;
+  function startSpiralLoop() {
+    spiralLoopSfx.currentTime = 0;
+    spiralLoopSfx.play().catch(() => {});
+  }
+  function stopSpiralLoop() {
+    spiralLoopSfx.pause();
   }
   // boss-defeat sfx -- umise_055. fires the moment the player drains
   // the bar to zero (the >0 -> 0 edge inside setBoss, which is also
@@ -1332,7 +1489,7 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     }
     // captions are trusted (PHASE_CAPTIONS constants) so innerHTML
     // is safe here -- needed to render multi-line titles (eg phase
-    // 7b's "TODESREIGEN -- SHADE'S EMBRACE<br>UNTERGANG -- DEATHTHROES")
+    // 7b's "TODESREIGEN -- SHADE'S EMBRACE<br>UNTERGANG -- SHADOWS IN SHADOWS")
     if (transCaptionEl) transCaptionEl.innerHTML = caption;
     if (transSubEl)     transSubEl.textContent   = sub || '';
     // restart trick -- clear then set on next frame
@@ -1610,6 +1767,473 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       }
     }
     return null;
+  }
+
+  // ---- WEDGE-IMPALE (singleton + chain) ------------------------------
+  // shared mechanic: 4 spears spawn orbiting player at WI_RADIUS_VH,
+  // orbit for orbitMs, lock + dash inward, fade. fully isolated to
+  // state.wi* + clearWedgeImpale() cleanup
+  function spawnWedgeImpaleCast(t, anchorMode) {
+    // anchor: 'player-live' tracks player every frame during orbit;
+    // 'player-snapshot' freezes at cast spawn (for chain casts)
+    const spears = [];
+    for (let i = 0; i < WI_COUNT; i++) {
+      const el = document.createElement('div');
+      el.className = 'wi-spear';
+      beamsEl.appendChild(el);
+      spears.push(el);
+    }
+    const orbitMs = (state.wiKind === 'chain') ? WI_CHAIN_ORBIT_MS : WI_SINGLETON_ORBIT_MS;
+    state.wiInstances.push({
+      spears, startT: t, orbitMs,
+      anchorMode,
+      anchorX: state.playerX, anchorY: state.playerY,  // initial; live mode overwrites each frame
+      phase: 'orbit',
+      lockX: 0, lockY: 0, lockAngle: 0,
+      damaged: false  // hit-once gate -- a cast can damage at most once
+    });
+  }
+
+  function clearWedgeImpale() {
+    for (const inst of state.wiInstances) for (const el of inst.spears) el.remove();
+    state.wiInstances.length = 0;
+    state.wiKind = null;
+    state.wiCastCount = 0;
+  }
+
+  // pattern entrypoint -- called from phase 1 cycler and phase 3
+  // interlude. starts a pattern if not already active, no-op if
+  // the same kind is already running
+  function tickWedgeImpale(t, kind) {
+    if (state.wiKind !== kind) {
+      clearWedgeImpale();
+      state.wiKind = kind;
+      state.wiStartT = t;
+      state.wiNextCastT = t;  // first cast fires immediately
+      state.wiCastCount = 0;
+    }
+    // cast scheduler
+    if (kind === 'singleton') {
+      // re-fire every (orbitMs + dash + fade + gap)
+      if (t >= state.wiNextCastT) {
+        spawnWedgeImpaleCast(t, 'player-live');
+        state.wiNextCastT = t + WI_SINGLETON_ORBIT_MS + WI_DASH_MS + WI_FADE_MS + WI_SINGLETON_CAST_GAP_MS;
+      }
+    } else if (kind === 'chain') {
+      if (state.wiCastCount < WI_CHAIN_COUNT && t >= state.wiNextCastT) {
+        spawnWedgeImpaleCast(t, 'player-snapshot');
+        state.wiCastCount++;
+        state.wiNextCastT = t + WI_CHAIN_CAST_INTERVAL_MS;
+      }
+    }
+    // per-instance update
+    const vh = window.innerHeight / 100;
+    const radius_px = WI_RADIUS_VH * vh;
+    for (let i = state.wiInstances.length - 1; i >= 0; i--) {
+      const inst = state.wiInstances[i];
+      const elapsed = t - inst.startT;
+      const tDashEnd = inst.orbitMs + WI_DASH_MS;
+      const tFadeEnd = tDashEnd + WI_FADE_MS;
+      // phase transitions
+      if (inst.phase === 'orbit' && elapsed >= inst.orbitMs) {
+        inst.phase = 'dash';
+        inst.lockX = inst.anchorX;
+        inst.lockY = inst.anchorY;
+        inst.lockAngle = (elapsed / 1000) * WI_ORBIT_OMEGA;
+        playLanceSkewer();
+      }
+      if (inst.phase === 'dash' && elapsed >= tDashEnd) {
+        inst.phase = 'fade';
+        for (const el of inst.spears) el.setAttribute('data-fading', 'true');
+      }
+      if (inst.phase === 'fade' && elapsed >= tFadeEnd) {
+        inst.phase = 'done';
+        for (const el of inst.spears) el.remove();
+        state.wiInstances.splice(i, 1);
+        continue;
+      }
+      // resolve anchor + base angle + radius based on phase
+      let anchorX, anchorY, baseAngle, r;
+      if (inst.phase === 'orbit') {
+        if (inst.anchorMode === 'player-live') {
+          anchorX = state.playerX;
+          anchorY = state.playerY;
+          inst.anchorX = anchorX; inst.anchorY = anchorY;
+        } else {
+          anchorX = inst.anchorX; anchorY = inst.anchorY;
+        }
+        baseAngle = (elapsed / 1000) * WI_ORBIT_OMEGA;
+        r = radius_px;
+      } else if (inst.phase === 'dash') {
+        anchorX = inst.lockX; anchorY = inst.lockY;
+        baseAngle = inst.lockAngle;
+        const k = (elapsed - inst.orbitMs) / WI_DASH_MS;
+        const e = k * k * k;  // easeInCubic
+        r = radius_px * (1 - e);
+      } else {  // fade
+        anchorX = inst.lockX; anchorY = inst.lockY;
+        baseAngle = inst.lockAngle;
+        r = 0;
+      }
+      // viewport center for anchor conversion. uses the hitbox-center
+      // baseline (83.5 + hbTopOff 2.125 + hbH/2 0.625 = 86.25vh) so
+      // spears converge ON the hitbox, not the sprite head 2vh above
+      const anchorVpX = window.innerWidth / 2 + anchorX;
+      const anchorVpY = 86.25 * vh + anchorY;
+      // collision -- spears are PERSISTENT hazards post-activation. damage
+      // fires on every-frame overlap, gated only by iframes (not by a
+      // one-shot flag). player must stay clear of the spears throughout
+      // orbit/dash/fade -- can't just take one hit and walk through
+      const immune = t < state.immuneUntilT;
+      const canHit = state.orbDamage && !immune && state.hits > 0
+                     && (inst.phase === 'orbit' || inst.phase === 'dash' || inst.phase === 'fade');
+      let hbL = 0, hbR = 0, hbT = 0, hbB = 0, hitR = 0;
+      if (canHit) {
+        const ph = getPlayerHitboxPx();
+        hbL = ph.l; hbR = ph.r; hbT = ph.t; hbB = ph.b;
+        hitR = 1.0 * vh;
+      }
+      const halfSpearVh = 5.5;  // spear is 11vh tall, ±5.5vh from center along apex axis
+      for (let s = 0; s < WI_COUNT; s++) {
+        const a = baseAngle + s * (2 * Math.PI / WI_COUNT);
+        const cosA = Math.cos(a), sinA = Math.sin(a);
+        const sx = anchorVpX + r * cosA;
+        const sy = anchorVpY + r * sinA;
+        const rot = a - Math.PI / 2;  // apex toward anchor
+        inst.spears[s].style.transform = 'translate(' + sx + 'px,' + sy + 'px) rotate(' + rot + 'rad)';
+        if (canHit) {
+          // 3-point sample (apex/center/base). damage retriggers on
+          // iframe expiry, NOT one-shot -- player must stay clear
+          const apexR = r - halfSpearVh * vh;
+          const baseR = r + halfSpearVh * vh;
+          const samples = [
+            [anchorVpX + apexR * cosA, anchorVpY + apexR * sinA],
+            [sx, sy],
+            [anchorVpX + baseR * cosA, anchorVpY + baseR * sinA],
+          ];
+          for (const [px, py] of samples) {
+            if (px + hitR >= hbL && px - hitR <= hbR &&
+                py + hitR >= hbT && py - hitR <= hbB) {
+              takeDamage(t);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ---- SPIRAL attack (phase 7a finale) -----------------------------------
+  // ported from testbed/demos/wedge-impale-demo.html. fully isolated --
+  // all state on state.spiral*, all DOM elements parented to beamsEl,
+  // single clearSpiral() call drops the field cleanly. no spiral code
+  // runs outside state.phase===7 && state.phase3Mode==='spiral'
+
+  // arena center in two coord systems:
+  // - VIEWPORT pixel coords (for placing wedges + tendril via translate)
+  // - PLAYER coords (for lerping state.playerX/Y, which uses its own origin)
+  // these MUST be used consistently -- the previous mixed-system bug
+  // landed the spiral way off-center
+  function spiralCenterVp() {
+    const ib = getInnerBoxPx();
+    return { x: (ib.l + ib.r) * 0.5, y: (ib.t + ib.b) * 0.5 };
+  }
+  function spiralCenterPlayer() {
+    const vh = window.innerHeight / 100;
+    const ib = getInnerBoxPx();
+    // state.playerX origin = window.innerWidth/2
+    // state.playerY origin = HITBOX center baseline (86.25vh viewport when
+    // playerY=0). matches getPlayerHitboxPx so pulling player.y to this
+    // arena-center target actually lands the HITBOX on arena center --
+    // wedges that converge there register damage
+    return {
+      x: (ib.l + ib.r) * 0.5 - window.innerWidth / 2,
+      y: (ib.t + ib.b) * 0.5 - 86.25 * vh,
+    };
+  }
+
+  function spawnSpiral(t) {
+    clearSpiral();  // defensive -- ensure no leftover state
+    const vh = window.innerHeight / 100;
+    state.spiralPhase   = 'telegraph';
+    state.spiralStartT  = t;
+    state.spiralEscapeT = 0;
+    state.spiralSnagOriginX = state.playerX;
+    state.spiralSnagOriginY = state.playerY;
+    // spawn wedges with formationT staggered by k -- outer wedges first
+    const armSpan  = (2 * Math.PI) / SPIRAL_ARMS;
+    const pitchRad = SPIRAL_ARM_PITCH_DEG * Math.PI / 180;
+    for (let a = 0; a < SPIRAL_ARMS; a++) {
+      for (let k = 0; k < SPIRAL_PER_ARM; k++) {
+        const tFrac = (SPIRAL_PER_ARM > 1) ? k / (SPIRAL_PER_ARM - 1) : 0;
+        const initialR = (SPIRAL_OUTER_R_VH + (SPIRAL_INNER_R_VH - SPIRAL_OUTER_R_VH) * tFrac) * vh;
+        const initialTheta = a * armSpan + k * pitchRad;
+        const formationT = tFrac * SPIRAL_FORMATION_MS;
+        const el = document.createElement('div');
+        el.className = 'spiral-wedge';
+        el.style.opacity = '0';
+        beamsEl.appendChild(el);
+        state.spiralWedges.push({ el, initialR, initialTheta, formationT });
+      }
+    }
+    // tendril SVG -- created once per spiral, removed in clearSpiral
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(svgNS, 'svg');
+    svg.setAttribute('class', 'spiral-tendril');
+    svg.style.position = 'absolute';
+    svg.style.left = '0';
+    svg.style.top  = '0';
+    svg.style.width  = '100%';
+    svg.style.height = '100%';
+    svg.style.pointerEvents = 'none';
+    svg.style.zIndex = '5';
+    svg.style.overflow = 'visible';
+    const path = document.createElementNS(svgNS, 'path');
+    path.setAttribute('stroke', '#000');
+    path.setAttribute('stroke-width', (1.1 * vh) + '');
+    path.setAttribute('stroke-linecap', 'round');
+    path.setAttribute('fill', 'none');
+    path.style.filter = 'drop-shadow(0 0 3px rgba(0,0,0,0.9)) drop-shadow(0 0 12px rgba(0,0,0,0.5))';
+    svg.appendChild(path);
+    beamsEl.appendChild(svg);
+    state.spiralTendrilSvg  = svg;
+    state.spiralTendrilPath = path;
+    startSpiralLoop();
+  }
+
+  function clearSpiral() {
+    for (const w of state.spiralWedges)        w.el.remove();
+    state.spiralWedges.length = 0;
+    for (const w of state.spiralReverseWedges) w.el.remove();
+    state.spiralReverseWedges.length = 0;
+    if (state.spiralTendrilSvg) {
+      state.spiralTendrilSvg.remove();
+      state.spiralTendrilSvg  = null;
+      state.spiralTendrilPath = null;
+    }
+    state.spiralPhase = 'idle';
+    state.spiralFiredLayers = null;
+    stopSpiralLoop();
+  }
+
+  // returns true if the spiral is currently controlling the player
+  // (snag/pull/formation sub-phases -- not release). player input is
+  // suppressed + position is overridden during this window
+  function spiralHoldingPlayer() {
+    if (state.phase !== 7 || state.phase3Mode !== 'spiral' || state.spiralPhase !== 'telegraph') return false;
+    const elapsed = _gameNow() - state.spiralStartT;
+    return elapsed < (SPIRAL_SNAG_MS + SPIRAL_PULL_MS + SPIRAL_FORMATION_MS);
+  }
+
+  // per-frame spiral update. called from updatePhase phase 7 handler.
+  // early-returns if spiral isn't active so it's safe to call anywhere
+  function updateSpiralPattern(t) {
+    if (state.spiralPhase === 'idle' || state.spiralPhase === 'done') return;
+    const elapsed = t - state.spiralStartT;
+    const tTelEnd   = SPIRAL_TELEGRAPH_MS;
+    const tSweepEnd = tTelEnd + SPIRAL_SWEEP_MS;
+    const tFadeEnd  = tSweepEnd + SPIRAL_REVERSE_MS + SPIRAL_FADE_MS;
+    const vh = window.innerHeight / 100;
+    const center = spiralCenterVp();  // viewport coords for wedges + tendril
+
+    // phase transitions ------------------------------------------------
+    if (state.spiralPhase === 'telegraph' && elapsed >= tTelEnd) {
+      state.spiralPhase = 'sweep';
+    }
+    if (state.spiralPhase === 'sweep' && elapsed >= tSweepEnd) {
+      // sphere moment -- clear sweep wedges, spawn reverse rings
+      state.spiralPhase = 'reverse';
+      state.spiralEscapeT = elapsed;
+      for (const w of state.spiralWedges) w.el.remove();
+      state.spiralWedges.length = 0;
+      const layerOffsetRad = SPIRAL_REVERSE_LAYER_ROTATION_DEG * Math.PI / 180;
+      for (let layer = 0; layer < SPIRAL_REVERSE_LAYERS; layer++) {
+        const wedgeCount = SPIRAL_REVERSE_WEDGES_PER_LAYER[layer];
+        const angSpacing = (2 * Math.PI) / wedgeCount;
+        const baseOffset = layer * layerOffsetRad;
+        for (let i = 0; i < wedgeCount; i++) {
+          const theta = i * angSpacing + baseOffset;
+          const el = document.createElement('div');
+          el.className = 'spiral-wedge spiral-wedge-reverse';
+          beamsEl.appendChild(el);
+          state.spiralReverseWedges.push({ el, layer, theta });
+        }
+      }
+      state.spiralFiredLayers = new Set();
+      stopSpiralLoop();
+    }
+    if (state.spiralPhase === 'reverse' && elapsed >= tSweepEnd + SPIRAL_REVERSE_MS) {
+      state.spiralPhase = 'fade';
+      for (const w of state.spiralReverseWedges) w.el.setAttribute('data-fading', 'true');
+    }
+    if (state.spiralPhase === 'fade' && elapsed >= tFadeEnd) {
+      state.spiralPhase = 'done';
+      clearSpiral();
+      return;
+    }
+
+    // tendril ----------------------------------------------------------
+    const holdUntil = SPIRAL_SNAG_MS + SPIRAL_PULL_MS + SPIRAL_FORMATION_MS;
+    if (state.spiralPhase === 'telegraph' && elapsed < holdUntil && state.spiralTendrilPath) {
+      // viewport-px coords for the svg path. center is already in vp coords.
+      // player viewport pos uses hitbox-center baseline (86.25vh) so the
+      // tendril visually reaches the hitbox, matching where damage lands
+      const cx = center.x;
+      const cy = center.y;
+      const px = window.innerWidth / 2 + state.playerX;
+      const py = 86.25 * vh + state.playerY;
+      const dx = px - cx, dy = py - cy;
+      const dist = Math.hypot(dx, dy);
+      const ang  = Math.atan2(dy, dx);
+      const lenScale = (elapsed < SPIRAL_SNAG_MS) ? (elapsed / SPIRAL_SNAG_MS) : 1;
+      const inFormation = elapsed >= SPIRAL_SNAG_MS + SPIRAL_PULL_MS;
+      const drawDist = inFormation ? Math.max(dist * lenScale, 3 * vh) : dist * lenScale;
+      const endX = cx + drawDist * Math.cos(ang);
+      const endY = cy + drawDist * Math.sin(ang);
+      // wiggling quadratic-bezier control point
+      const mx = (cx + endX) * 0.5;
+      const my = (cy + endY) * 0.5;
+      const perpAng = ang + Math.PI * 0.5;
+      const wig = Math.sin(elapsed * 0.008) * 0.5 + Math.sin(elapsed * 0.013) * 0.5;
+      const cpOff = drawDist * 0.22 * wig;
+      const cpX = mx + cpOff * Math.cos(perpAng);
+      const cpY = my + cpOff * Math.sin(perpAng);
+      state.spiralTendrilPath.setAttribute('d',
+        'M ' + cx + ' ' + cy + ' Q ' + cpX + ' ' + cpY + ' ' + endX + ' ' + endY);
+      state.spiralTendrilSvg.style.opacity = '1';
+    } else if (state.spiralTendrilSvg) {
+      state.spiralTendrilSvg.style.opacity = '0';
+    }
+
+    // sweep effective-time (piecewise: phase1 fast, phase2 base, phase3 exp ramp)
+    let sweepElapsedMs;
+    if      (state.spiralPhase === 'telegraph') sweepElapsedMs = 0;
+    else if (state.spiralPhase === 'sweep')     sweepElapsedMs = elapsed - tTelEnd;
+    else                                        sweepElapsedMs = SPIRAL_SWEEP_MS;
+    const t1 = SPIRAL_SWEEP_TRANSITION_MS;
+    const t2 = SPIRAL_SWEEP_PHASE3_START_MS;
+    const m1 = SPIRAL_SWEEP_PHASE1_MULT;
+    const m3peak = SPIRAL_SWEEP_PHASE3_PEAK_MULT;
+    const phase3Dur = SPIRAL_SWEEP_MS - t2;
+    let sweepEffTimeMs;
+    if (sweepElapsedMs <= t1) {
+      sweepEffTimeMs = sweepElapsedMs * m1;
+    } else if (sweepElapsedMs <= t2) {
+      sweepEffTimeMs = t1 * m1 + (sweepElapsedMs - t1);
+    } else {
+      const e = sweepElapsedMs - t2, d = phase3Dur;
+      const phase3EffTime = (d / Math.log(m3peak)) * (Math.pow(m3peak, e / d) - 1);
+      sweepEffTimeMs = t1 * m1 + (t2 - t1) + phase3EffTime;
+    }
+
+    // global rotation (continuous through sweep + reverse + fade)
+    const sweepRotRateMs = (SPIRAL_GLOBAL_ROTATE_DEG * Math.PI / 180) / SPIRAL_SWEEP_MS;
+    const globalRot = (state.spiralPhase === 'telegraph') ? 0
+                    : (elapsed - tTelEnd) * sweepRotRateMs;
+
+    // sweep wedges -----------------------------------------------------
+    const innerR_px = SPIRAL_INNER_R_VH * vh;
+    const outerR_px = SPIRAL_OUTER_R_VH * vh;
+    const radialSpan_px = outerR_px - innerR_px;
+    const innerRatePx = (SPIRAL_SWEEP_INNER_RATE_VHS * vh) / 1000;
+    const outerRatePx = (SPIRAL_SWEEP_OUTER_RATE_VHS * vh) / 1000;
+    const stopR_px = SPIRAL_STOP_R_VH * vh;
+    const formationStart = SPIRAL_SNAG_MS + SPIRAL_PULL_MS;
+    const formationElapsed = Math.max(0, elapsed - formationStart);
+    const inTelegraph = state.spiralPhase === 'telegraph';
+    // damage params -- computed once per frame, reused for all wedges.
+    // uses the actual player hitbox AABB + a small spear "tip" radius
+    const immune_s = t < state.immuneUntilT;
+    const canHit_s = state.orbDamage && !immune_s && state.hits > 0 && !inTelegraph;
+    let hbL_s = 0, hbR_s = 0, hbT_s = 0, hbB_s = 0;
+    const hitR_s = 0.8 * vh;
+    if (canHit_s) {
+      const ph = getPlayerHitboxPx();
+      hbL_s = ph.l; hbR_s = ph.r; hbT_s = ph.t; hbB_s = ph.b;
+    }
+    for (const w of state.spiralWedges) {
+      if (inTelegraph && formationElapsed < w.formationT) { w.el.style.opacity = '0'; continue; }
+      const normR = (radialSpan_px > 0) ? (w.initialR - innerR_px) / radialSpan_px : 0;
+      const wedgeRate = innerRatePx + normR * (outerRatePx - innerRatePx);
+      const r = Math.max(stopR_px, w.initialR - wedgeRate * sweepEffTimeMs);
+      if (r <= 0.01) { w.el.style.opacity = '0'; continue; }
+      w.el.style.opacity = '';
+      const theta = w.initialTheta + globalRot;
+      const sx = center.x + r * Math.cos(theta);
+      const sy = center.y + r * Math.sin(theta);
+      const rot = theta - Math.PI / 2;
+      w.el.style.transform = 'translate(' + sx + 'px,' + sy + 'px) rotate(' + rot + 'rad)';
+      // damage: 3-point sample (apex/center/base). persistent -- damage
+      // retriggers on iframe expiry, no one-shot gate
+      if (canHit_s) {
+        const apexR = r - 1.5 * vh, baseR = r + 1.5 * vh;
+        const cosT = Math.cos(theta), sinT = Math.sin(theta);
+        const samples = [
+          [center.x + apexR * cosT, center.y + apexR * sinT],
+          [sx, sy],
+          [center.x + baseR * cosT, center.y + baseR * sinT],
+        ];
+        for (const [px, py] of samples) {
+          if (px + hitR_s >= hbL_s && px - hitR_s <= hbR_s &&
+              py + hitR_s >= hbT_s && py - hitR_s <= hbB_s) {
+            takeDamage(t);
+            break;
+          }
+        }
+      }
+    }
+
+    // reverse rings ----------------------------------------------------
+    if (state.spiralReverseWedges.length > 0) {
+      const tFromEscape = elapsed - state.spiralEscapeT;
+      // per-layer orb sfx (one trigger per layer at its launch moment)
+      if (state.spiralFiredLayers) {
+        for (let layer = 0; layer < SPIRAL_REVERSE_LAYERS; layer++) {
+          if (!state.spiralFiredLayers.has(layer) && tFromEscape >= SPIRAL_REVERSE_LAYER_DELAYS_MS[layer]) {
+            playOrbSfx();
+            state.spiralFiredLayers.add(layer);
+          }
+        }
+      }
+      const spawnR_px = SPIRAL_REVERSE_SPAWN_R_VH * vh;
+      const burstMult = SPIRAL_REVERSE_BURST_MULT;
+      const tauMs     = SPIRAL_REVERSE_BURST_TAU_MS;
+      // damage params (reuse spiral computation)
+      for (const w of state.spiralReverseWedges) {
+        const layerSpeedPx = (SPIRAL_REVERSE_LAYER_SPEEDS_VHS[w.layer] * vh) / 1000;
+        const layerDelay   = SPIRAL_REVERSE_LAYER_DELAYS_MS[w.layer];
+        const tEff = tFromEscape - layerDelay;
+        if (tEff <= 0) { w.el.style.opacity = '0'; continue; }
+        w.el.style.opacity = '';
+        const vFinal = layerSpeedPx;
+        const vInit  = vFinal * burstMult;
+        const decay  = 1 - Math.exp(-tEff / tauMs);
+        const r = spawnR_px + vFinal * tEff + (vInit - vFinal) * tauMs * decay;
+        const theta = w.theta + globalRot;
+        const sx = center.x + r * Math.cos(theta);
+        const sy = center.y + r * Math.sin(theta);
+        const rot = theta + Math.PI / 2;  // apex points OUTWARD
+        w.el.style.transform = 'translate(' + sx + 'px,' + sy + 'px) rotate(' + rot + 'rad)';
+        // damage: 3-point sample (apex outward for reverse rings).
+        // persistent -- iframe-gated, no one-shot
+        if (canHit_s) {
+          const apexR = r + 1.5 * vh, baseR = r - 1.5 * vh;
+          const cosT = Math.cos(theta), sinT = Math.sin(theta);
+          const samples = [
+            [center.x + apexR * cosT, center.y + apexR * sinT],
+            [sx, sy],
+            [center.x + baseR * cosT, center.y + baseR * sinT],
+          ];
+          for (const [px, py] of samples) {
+            if (px + hitR_s >= hbL_s && px - hitR_s <= hbR_s &&
+                py + hitR_s >= hbT_s && py - hitR_s <= hbB_s) {
+              takeDamage(t);
+              break;
+            }
+          }
+        }
+      }
+    }
   }
 
   function spawnPuddle(t) {
@@ -2098,33 +2722,6 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     if (gx < 0 || gx >= cfg.cols || gy < 0 || gy >= cfg.rows) return;
     state.snakeGrid[gy * cfg.cols + gx]++;
   }
-  // pick the best next direction at a cell boundary. candidates =
-  // forward + perpendicular-left + perpendicular-right (no u-turn).
-  // less-filled neighbor wins; forward gets a small bonus so the
-  // snake commits to a lane rather than dithering on ties
-  function chooseSnakeDirection(snake) {
-    const dirs = [
-      snake.dirRad,                  // forward
-      snake.dirRad + Math.PI / 2,
-      snake.dirRad - Math.PI / 2
-    ];
-    let bestDir = snake.dirRad;
-    let bestScore = -Infinity;
-    for (let i = 0; i < dirs.length; i++) {
-      const d = dirs[i];
-      const dx = Math.round(Math.cos(d));
-      const dy = Math.round(Math.sin(d));
-      const ngx = snake.gx + dx;
-      const ngy = snake.gy + dy;
-      const fill = snakeFillness(ngx, ngy);
-      const score = -fill + (i === 0 ? PHASE_7B_SNAKE_FORWARD_BONUS : 0);
-      if (score > bestScore) {
-        bestScore = score;
-        bestDir = d;
-      }
-    }
-    return bestDir;
-  }
   function spawnSnake(t, originX, originY, dirRad) {
     if (!state.snakeGridCfg) initSnakeGrid();
     const cell = snakeCellAt(originX, originY) || { gx: 0, gy: 0 };
@@ -2134,10 +2731,18 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       dirRad,
       gx: cell.gx, gy: cell.gy,
       speed: PHASE_7B_SNAKE_SPEED_VH * (window.innerHeight / 100),
-      // immortal -- the self-kill mechanic was removed so the
-      // arena actually fills. alive flag kept on the record in
-      // case future tuning wants it back
+      // alive flag kept for legacy callers; the kill semantics live
+      // on terminated now (snake stops moving once terminated, trail
+      // stays put as a static obstacle for player collision)
       alive: true,
+      terminated: false,
+      // bisectionCount tracks how many times branchOneSnake has
+      // bisected this trail. each trail can be bisected up to
+      // PHASE_7B_MAX_BISECTIONS times, at u positions from the
+      // sequence above (0.5 then 0.25 then 0.75 ...). lowest
+      // count wins the next branch step; ties broken by spawn
+      // order, so the whole policy is fully deterministic
+      bisectionCount: 0,
       segments: [],
       lastT: t
     };
@@ -2178,94 +2783,160 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     });
   }
 
-  // per-frame: walk every alive snake forward, extend its current
-  // segment, decide to turn / split when timers cross. run collision
-  // for head-vs-any-segment + player-vs-any-segment
+  // greedy bisection. each branch step evaluates every (terminated
+  // trail, u in U_CANDIDATES, perp side) triple and predicts how
+  // far a perpendicular branch from that point would extend before
+  // hitting a wall or filled cell. the longest predicted branch
+  // wins -- so spawns land at trail ENDS facing open arena, not at
+  // midpoints where they collide with other bisections halfway.
+  // tiebreaks: lower bisectionCount first (fair distribution),
+  // then iteration order (spawn-order parent, then smaller u,
+  // then first perpendicular candidate). no Math.random anywhere
+  function branchOneSnake(t) {
+    if (!state.snakeGridCfg) return;
+    if (state.activeSnakes.length >= PHASE_7B_SNAKE_MAX_COUNT) return;
+    const cfg = state.snakeGridCfg;
+    let bestParent = null;
+    let bestPredLen = 0;
+    let bestPx = 0, bestPy = 0;
+    let bestDir = 0;
+    for (const parent of state.activeSnakes) {
+      if (!parent.terminated) continue;
+      if (parent.bisectionCount >= PHASE_7B_MAX_BISECTIONS) continue;
+      if (!parent.segments.length) continue;
+      let totalLen = 0;
+      for (const s of parent.segments) totalLen += Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+      if (totalLen < 0.01) continue;
+      for (const uTarget of PHASE_7B_U_CANDIDATES) {
+        // walk to position uTarget along the parent trail
+        const targetDist = totalLen * uTarget;
+        let cumulative = 0;
+        let seg = null;
+        let segU = 0;
+        for (const s of parent.segments) {
+          const len = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+          if (cumulative + len >= targetDist) {
+            seg = s;
+            segU = len > 0 ? Math.min(1, (targetDist - cumulative) / len) : 0;
+            break;
+          }
+          cumulative += len;
+        }
+        if (!seg) continue;
+        const px = seg.x1 + (seg.x2 - seg.x1) * segU;
+        const py = seg.y1 + (seg.y2 - seg.y1) * segU;
+        const cell = snakeCellAt(px, py);
+        if (!cell) continue;
+        const dirCands = [seg.dirRad + Math.PI / 2, seg.dirRad - Math.PI / 2];
+        for (const d of dirCands) {
+          const dx = Math.round(Math.cos(d));
+          const dy = Math.round(Math.sin(d));
+          // predict perpendicular branch length: walk in (dx, dy)
+          // from the spawn cell until OOB or filled cell
+          let gx = cell.gx, gy = cell.gy;
+          let predLen = 0;
+          let safety = 0;
+          while (safety++ < cfg.cols + cfg.rows + 2) {
+            gx += dx; gy += dy;
+            if (gx < 0 || gx >= cfg.cols || gy < 0 || gy >= cfg.rows) break;
+            if (snakeFillness(gx, gy) > 0) break;
+            predLen++;
+          }
+          if (predLen < 1) continue; // 0-cell branch = waste
+          // composite tiebreak: PRIMARY lower bisectionCount, then
+          // longer predicted length. strict `<` / `>` keeps earlier
+          // iterated parent / smaller u / first perp side on ties
+          const better = !bestParent ||
+            parent.bisectionCount < bestParent.bisectionCount ||
+            (parent.bisectionCount === bestParent.bisectionCount && predLen > bestPredLen);
+          if (better) {
+            bestParent = parent;
+            bestPredLen = predLen;
+            bestPx = px;
+            bestPy = py;
+            bestDir = d;
+          }
+        }
+      }
+    }
+    if (!bestParent) return; // nothing useful left this step
+    // snap onto the cell-center axis perpendicular to the child's
+    // direction so the new trail rides grid lanes from frame one
+    const cell = snakeCellAt(bestPx, bestPy);
+    let sx = bestPx, sy = bestPy;
+    if (cell) {
+      if (Math.abs(Math.cos(bestDir)) > 0.5) {
+        sy = cfg.originY + (cell.gy + 0.5) * cfg.cellH;
+      } else {
+        sx = cfg.originX + (cell.gx + 0.5) * cfg.cellW;
+      }
+    }
+    spawnSnake(t, sx, sy, bestDir);
+    bestParent.bisectionCount++;
+  }
+
+  // per-frame: walk every LIVE snake straight forward in its fixed
+  // direction, extend its current segment. terminate when the head
+  // crosses out of the inner box OR enters a cell that's already
+  // filled. terminated trails persist for player collision but
+  // stop advancing
   function updateSnakes(t) {
     if (state.activeSnakes.length === 0) return;
     const vh = window.innerHeight / 100;
-    const ib = getInnerBoxPx();
     const ph = getPlayerHitboxPx();
     const pcx = (ph.l + ph.r) / 2;
     const pcy = (ph.t + ph.b) / 2;
     const immune = t < state.immuneUntilT;
-    // first pass -- walk each alive head forward + update current segment.
-    // turns are GRID-ALIGNED: a turn decision happens only when the head
-    // crosses into a new cell, picking the least-filled neighbor (forward
-    // / perpendicular). emergent pattern reads as a hilbert / lawn-mower
-    // fill of the arena
     for (const snake of state.activeSnakes) {
       if (!snake.alive) continue;
+      if (snake.terminated) continue;
       const dt = Math.max(0, Math.min(0.064, (t - snake.lastT) / 1000));
       snake.lastT = t;
       snake.headX += Math.cos(snake.dirRad) * snake.speed * dt;
       snake.headY += Math.sin(snake.dirRad) * snake.speed * dt;
-      // extend current segment to track new head
       const seg = snake.segments[snake.segments.length - 1];
       seg.x2 = snake.headX;
       seg.y2 = snake.headY;
       seg.el.style.width = Math.hypot(seg.x2 - seg.x1, seg.y2 - seg.y1) + 'px';
-      // grid cell crossing -- if the head moved into a new cell, mark
-      // it + decide whether to turn. clamp the head back if the new
-      // cell is out of bounds (forces a turn into the box)
       const cell = snakeCellAt(snake.headX, snake.headY);
       if (cell && (cell.gx !== snake.gx || cell.gy !== snake.gy)) {
         const cfg = state.snakeGridCfg;
         const outOfBox = cell.gx < 0 || cell.gx >= cfg.cols ||
                          cell.gy < 0 || cell.gy >= cfg.rows;
-        if (outOfBox) {
-          // pull the head back into the previous cell so the segment
-          // doesn't render outside the box, then force a turn
-          snake.headX -= Math.cos(snake.dirRad) * snake.speed * dt;
-          snake.headY -= Math.sin(snake.dirRad) * snake.speed * dt;
+        const alreadyFilled = !outOfBox && snakeFillness(cell.gx, cell.gy) > 0;
+        if (outOfBox || alreadyFilled) {
+          // clamp the head FLUSH with what stopped it -- the wall
+          // edge for OOB, or the boundary with the filled cell for
+          // a fill collision. previously we pulled back by one
+          // dt's motion, which left a sliver-sized gap at walls
+          // (the user-visible "top bar remains unfilled" symptom)
+          if (outOfBox) {
+            if (cell.gx < 0)              snake.headX = cfg.originX;
+            else if (cell.gx >= cfg.cols) snake.headX = cfg.originX + cfg.cols * cfg.cellW;
+            if (cell.gy < 0)              snake.headY = cfg.originY;
+            else if (cell.gy >= cfg.rows) snake.headY = cfg.originY + cfg.rows * cfg.cellH;
+          } else {
+            const dirX = Math.round(Math.cos(snake.dirRad));
+            const dirY = Math.round(Math.sin(snake.dirRad));
+            if (dirX > 0)      snake.headX = cfg.originX + cell.gx * cfg.cellW;
+            else if (dirX < 0) snake.headX = cfg.originX + (cell.gx + 1) * cfg.cellW;
+            if (dirY > 0)      snake.headY = cfg.originY + cell.gy * cfg.cellH;
+            else if (dirY < 0) snake.headY = cfg.originY + (cell.gy + 1) * cfg.cellH;
+          }
           seg.x2 = snake.headX;
           seg.y2 = snake.headY;
           seg.el.style.width = Math.hypot(seg.x2 - seg.x1, seg.y2 - seg.y1) + 'px';
-          // try a perpendicular direction -- the chooser will avoid
-          // out-of-bounds via the fillness sentinel. same cell-center
-          // snap as the normal turn path so the edge rows/cols get
-          // full coverage when forced-turning along a wall
-          const tentativeDir = chooseSnakeDirection(snake);
-          if (tentativeDir !== snake.dirRad) {
-            snake.dirRad = tentativeDir;
-            const cfg = state.snakeGridCfg;
-            if (Math.abs(Math.cos(tentativeDir)) > 0.5) {
-              snake.headY = cfg.originY + (snake.gy + 0.5) * cfg.cellH;
-            } else {
-              snake.headX = cfg.originX + (snake.gx + 0.5) * cfg.cellW;
-            }
-            startSnakeSegment(snake, snake.headX, snake.headY);
-          }
+          snake.terminated = true;
         } else {
-          // new cell inside the box -- record entry + mark density
+          // new empty cell -- record entry + mark density
           snake.gx = cell.gx;
           snake.gy = cell.gy;
           snakeIncrement(snake.gx, snake.gy);
-          // decide next direction; if it differs from current, SNAP
-          // the head onto the current cell's center axis perpendicular
-          // to the NEW direction. without the snap, the trail sits on
-          // the cell boundary, leaving the outer half of each row/col
-          // uncovered -- the corner gap the player was hiding in
-          const nextDir = chooseSnakeDirection(snake);
-          if (nextDir !== snake.dirRad) {
-            snake.dirRad = nextDir;
-            const cfg = state.snakeGridCfg;
-            if (Math.abs(Math.cos(nextDir)) > 0.5) {
-              snake.headY = cfg.originY + (snake.gy + 0.5) * cfg.cellH;
-            } else {
-              snake.headX = cfg.originX + (snake.gx + 0.5) * cfg.cellW;
-            }
-            startSnakeSegment(snake, snake.headX, snake.headY);
-          }
         }
       }
     }
-    // (snakes are IMMORTAL by design -- no head-vs-segment kill loop.
-    // they keep walking + filling forever. the avoidance policy in
-    // chooseSnakeDirection naturally steers them toward unfilled cells.
-    // when the grid saturates they walk over already-laid trails,
-    // increasing density but no longer expanding the visible danger)
-    // player-vs-segment damage (every snake is alive, every segment is hot)
+    // player-vs-segment damage. every segment is hot regardless of
+    // whether its snake is still moving or terminated
     if (state.orbDamage && !immune && state.hits > 0) {
       for (const snake of state.activeSnakes) {
         let hit = false;
@@ -2283,19 +2954,22 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
         }
       }
     }
-    // continuous trickle -- after the initial 4 prongs, one extra
-    // prong spawns from the boss every TRICKLE_MS in a random
-    // cardinal. caps at MAX_COUNT so the late-section additions
-    // close the last unfilled corridors right around the 24s mark
-    // without saturating early
+    // branching gate -- the section opens with the deterministic
+    // 4-seed skeleton; random branches only start firing once all
+    // 4 seeds have terminated. once flipped, the flag stays set
+    // for the rest of the section (so later live branches don't
+    // re-block the cadence)
+    if (!state.phase8InitialsRetired &&
+        state.activeSnakes.length > 0 &&
+        state.activeSnakes.every(s => s.terminated)) {
+      state.phase8InitialsRetired = true;
+    }
     if (state.phase3Mode === 'snake-curve' &&
+        state.phase8InitialsRetired &&
         state.activeSnakes.length < PHASE_7B_SNAKE_MAX_COUNT &&
-        t >= state.nextSnakeTrickleT) {
-      const bc = bossCenterPx();
-      const d = PHASE_7B_SNAKE_PRONG_DIRS[
-        Math.floor(Math.random() * PHASE_7B_SNAKE_PRONG_DIRS.length)];
-      spawnSnake(t, bc.x, bc.y, d);
-      state.nextSnakeTrickleT = t + PHASE_7B_SNAKE_TRICKLE_MS;
+        t >= state.nextSnakeBranchT) {
+      branchOneSnake(t);
+      state.nextSnakeBranchT = t + PHASE_7B_SNAKE_BRANCH_MS;
     }
   }
 
@@ -2318,26 +2992,30 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     for (const snake of state.activeSnakes) {
       for (const seg of snake.segments) seg.el.remove();
     }
-    state.activeSnakes.length = 0;
-    state.snakeGrid          = null;
-    state.snakeGridCfg       = null;
-    state.nextSnakeTrickleT  = 0;
+    state.activeSnakes.length   = 0;
+    state.snakeGrid             = null;
+    state.snakeGridCfg          = null;
+    state.nextSnakeBranchT      = 0;
+    state.snakeBranchIdx        = 0;
+    state.phase8InitialsRetired = false;
   }
 
   // spirit-bomb wipe -- pulls every segment + nulls the grid so the
-  // field reads as cleared, then immediately spawns the 4 cardinal
-  // prongs from the boss again. trickle clock resets so the steady
-  // continuous-spawn picks back up on its normal cadence. only does
-  // anything during phase 8's snake-curve section -- a no-op elsewhere
+  // field reads as cleared, then re-seeds the 4 initial snakes.
+  // branching clock + initials-retired flag reset so the section
+  // restarts its deterministic-then-branching arc. only does
+  // anything during phase 8's snake-curve section -- no-op elsewhere
   function wipeSnakesForBomb(t) {
     if (state.activeSnakes.length === 0 && !state.snakeGridCfg) return;
     clearSnakes();
     if (state.phase === 8 && state.phase3Mode === 'snake-curve') {
       const bc = bossCenterPx();
-      for (const d of PHASE_7B_SNAKE_PRONG_DIRS) {
-        spawnSnake(t, bc.x, bc.y, d);
+      const vhPx = window.innerHeight / 100;
+      for (const p of PHASE_7B_SNAKE_INIT_PRONGS) {
+        spawnSnake(t, bc.x + p.oxVh * vhPx, bc.y + p.oyVh * vhPx, p.dir);
       }
-      state.nextSnakeTrickleT = t + PHASE_7B_SNAKE_TRICKLE_MS;
+      state.phase8InitialsRetired = false;
+      state.nextSnakeBranchT = t + PHASE_7B_SNAKE_BRANCH_MS;
     }
   }
 
@@ -2651,6 +3329,13 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   }
 
   const PHASE_4_EXIT_MS = 1400;
+  // parting-gift globe -- drops at the portal mouth right after
+  // maestrul finishes fading out. fires at ~700ms (just past the
+  // 600ms boss-vanish, while the portal is still mid-close) so it
+  // visually reads as left behind on his way through. grants
+  // state.output + 1, same convention as the mid-phase 15%-cross drop.
+  // skipped at max output -- pointless gift
+  const PHASE_4_EXIT_GLOBE_DELAY_MS = 700;
   function firePortalExit(t) {
     const vh = window.innerHeight / 100;
     const cx = window.innerWidth / 2;
@@ -2668,6 +3353,16 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     window.setTimeout(() => {
       bossEl.setAttribute('data-portaling', 'hidden');
     }, 600);
+    // parting-gift globe -- captured px/py so the drop lands at the
+    // portal mouth even if the phase-change boss-glide has nudged
+    // bossX/bossY by the time the timer fires. phase-guard so a
+    // resetFight (which routes through setPhase(1) + clearGlobes)
+    // doesn't get a phantom globe popping in mid-phase 1
+    window.setTimeout(() => {
+      if (state.phase !== 4) return;
+      if (state.output >= OUTPUT_MAX) return;
+      spawnGlobe(state.output + 1, px, py);
+    }, PHASE_4_EXIT_GLOBE_DELAY_MS);
     state.transitionUntilT = t + PHASE_4_EXIT_MS;
   }
 
@@ -2738,9 +3433,9 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     // iron-maiden idiom + the vampire-fiction term for being claimed.
     // gameplay-side, that lore is expressed as a death round-dance of
     // wheeling spike-cages escalating in from the arena walls);
-    // untergang = DEATHTHROES (the downfall, snake-curves multiplying
+    // untergang = SHADOWS IN SHADOWS (the downfall, snake-curves multiplying
     // like a hilbert curve until the arena ends)
-    8: { caption: "TODESREIGEN -- SHADE'S EMBRACE<br>UNTERGANG -- DEATHTHROES", sub: 'phase 7b', durationMs: 2400 }
+    8: { caption: "TODESREIGEN -- SHADE'S EMBRACE<br>UNTERGANG -- SHADOWS IN SHADOWS", sub: 'phase 7b', durationMs: 2400 }
   };
   // opts.durationMs -- override the transition duration for this entry
   // (eg the drawn-out boss-defeat transition). when omitted, falls back
@@ -2760,6 +3455,11 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     state.diagDir       = -1;
     state.crossRotation = 0;
     state.patternName   = 'idle';
+    // spiral attack cleanup -- if entering or leaving phase 7, drop any
+    // lingering spiral state. idempotent + safe to call from any phase
+    clearSpiral();
+    // wedge-impale cleanup -- same idempotent pattern
+    clearWedgeImpale();
     // boss health refills on every phase boundary -- timer-driven
     // and defeat-driven alike. before, only the setBoss zero-edge
     // path refilled, so a phase ending by timer (the default) left
@@ -2777,13 +3477,11 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       state.boss = 1.0;
       healthFill.style.width = '100%';
     }
-    // light elemental -- refill bomb pips on every phase boundary
-    // (including 7 -> 8, which the boss-health refill skips). a fresh
-    // pool per phase makes the bomb feel like a movement-scoped
-    // resource rather than a once-a-fight panic button, and ensures
-    // the player can actually use it for chip dmg in the later phases
-    // where the damage multiplier is harshest
-    setBombs(3);
+    // light elemental refresh USED to fire on every phase boundary
+    // here. moved to takeDamage so a fresh pool comes with each
+    // life-loss respawn instead, which makes the bomb a per-life
+    // resource (touhou convention) and stops a phase advance from
+    // silently rewarding bad play with extra pips
     // rewind the fight clock so the hud timer reads the canonical
     // start-of-phase time. running R then jumping forward feels right
     const startS = PHASE_START_S[n] != null ? PHASE_START_S[n] : 0;
@@ -2794,7 +3492,25 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     // (music arbitrarily off). natural timer advances also fire here,
     // but the music is already at startS -- the seek-gate skips the
     // near-no-op so the common path stays glitch-free
-    try { opts.onPhaseChange?.(n, startS); } catch (_) {}
+    // eslint-disable-next-line no-console
+    console.log('[hole2-sync] engine fired onPhaseChange', {
+      n, startS,
+      handlerViaOpts: !!opts?.onPhaseChange,
+      handlerViaBootCapture: !!_bootCapturedOnPhaseChange,
+      optsKeys: Object.keys(opts ?? {}).join(','),
+      optsHasKey: !!(opts && 'onPhaseChange' in opts)
+    });
+    // try the boot-captured local first -- if opts has been mutated,
+    // this is the original handler; opts.onPhaseChange might be gone.
+    // opts itself can also be undefined (timer-driven auto-advance and
+    // resetFight both call setPhase with no opts arg), so guard every
+    // dereference -- a throw here aborts the rest of setPhase, which
+    // is what was breaking auto-advance + reset (transition never
+    // fired, activeProgram never wired, onFightReset never called)
+    try { _bootCapturedOnPhaseChange?.(n, startS); } catch (_) {}
+    if (!_bootCapturedOnPhaseChange) {
+      try { opts?.onPhaseChange?.(n, startS); } catch (_) {}
+    }
     // wipe stale orbs + beams + +s + towers + teeth so the new phase
     // starts clean. also reset phase 3 sub-mode + one-shot flags so
     // jumping back to phase 3 via ] replays the full 3a -> 3b sequence
@@ -3038,13 +3754,16 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   }
 
   // ---- globe spawn / update / collect helpers ----
-  // spawnGlobe(targetLevel) -- create a globe at boss center, colored
-  // for the level the player will become after collection
+  // spawnGlobe(targetLevel, atX?, atY?) -- create a globe at boss
+  // center (default) or at an explicit px position. the optional
+  // override is used by the phase 3 -> 4 portal-exit drop, where
+  // the boss has already glided away from the portal spot by the
+  // time the gift lands
   const globesEl = document.getElementById('globes');
-  function spawnGlobe(targetLevel) {
+  function spawnGlobe(targetLevel, atX, atY) {
     const vh = window.innerHeight / 100;
-    const cx = window.innerWidth / 2 + state.bossX;
-    const cy = BOSS_CENTER_Y_VH * vh + state.bossY;
+    const cx = (atX != null) ? atX : (window.innerWidth / 2 + state.bossX);
+    const cy = (atY != null) ? atY : (BOSS_CENTER_Y_VH * vh + state.bossY);
     const el = document.createElement('div');
     el.className = 'globe';
     el.style.setProperty('--globe-color', GLOBE_COLORS[targetLevel - 1] || '#fff');
@@ -3277,7 +3996,7 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       if (!state.devUnlocked &&
           _devBuf.slice(-DEV_PASSWORD.length) === DEV_PASSWORD) {
         state.devUnlocked = true;
-        _showDevToast('[dev unlocked] -- 1..5 globe lvl, H hit, I immunity, [ ] phase, R reset');
+        _showDevToast('[dev unlocked] -- 1..5 globe lvl, H hit, I immunity, [ ] phase');
       }
       // lehrer -- visual admin panel unlock. fires the onAdminUnlock
       // callback ONCE with an api handle the React panel uses to
@@ -3299,10 +4018,19 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       flashBomb();
     }
 
+    // R = full restart -- public, not dev-gated. same path the
+    // lives-expire flow takes. handles bombs/hits/boss/output, player
+    // position, immunity, bullets, fight clock, and the per-phase
+    // wipe via setPhase(1). honestly the fight is long enough that
+    // bailing out and starting over deserves a one-key shortcut
+    if (k === 'r') {
+      resetFight();
+    }
+
     // ---- dev-only keys -- gated on the password ----
-    // GLOBE LVL switches, force-hit, orb-damage toggle, phase scrub,
-    // and full reset are all banned for casual viewers. typing the
-    // password (DEV_PASSWORD above) inside the arena flips _isDev()
+    // GLOBE LVL switches, force-hit, orb-damage toggle, and phase
+    // scrub are all banned for casual viewers. typing the password
+    // (DEV_PASSWORD above) inside the arena flips _isDev()
     if (_isDev()) {
       // number keys 1..OUTPUT_MAX as quick GLOBE LVL switches
       if (k.length === 1 && k >= '1' && k <= String(OUTPUT_MAX)) {
@@ -3326,12 +4054,6 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       // confirmation, not a silent state swap
       if (k === '[') setPhase(state.phase - 1, { forceTitleCard: true });
       if (k === ']') setPhase(state.phase + 1, { forceTitleCard: true });
-      if (k === 'r') {
-        // full reset, same path the lives-expire flow takes. handles
-        // bombs/hits/boss/output, player position, immunity, bullets,
-        // fight clock, and the per-phase wipe via setPhase(1)
-        resetFight();
-      }
     }
   });
   _wlisten('keyup', (e) => {
@@ -3348,13 +4070,29 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // chooses when to come back via Escape. otherwise switching to a
   // chat tab for a beat would cost lives the player never saw coming.
   // also clear pressed state so a held key from before tab-out doesn't
-  // surface on resume
+  // surface on resume.
+  //
+  // tab-in re-asserts the pause: on long-backgrounded tabs the html
+  // audio elements + the YT music iframe can drift back to playing
+  // on their own (browser-level resume, YT buffer recovery, etc.) --
+  // walks the pool and re-pauses anything that crept back alive.
+  // the YT iframe re-asserts itself via its onStateChange handler in
+  // Hole2Page; this loop only covers the html audio pool
   function _onVisibility() {
     if (document.hidden && !_paused) {
       state.pressed.left = state.pressed.right = false;
       state.pressed.up   = state.pressed.down  = false;
       state.pressed.z    = state.pressed.shift = false;
       _setPaused(true);
+      return;
+    }
+    if (!document.hidden && _paused) {
+      // re-pause anything that quietly came back to life. _wasPlaying
+      // was set at _setPaused(true); we don't touch it here so resume
+      // still restarts the same set when the user eventually escapes
+      for (const a of _audioPool) {
+        try { if (!a.paused) a.pause(); } catch (_) {}
+      }
     }
   }
   document.addEventListener('visibilitychange', _onVisibility);
@@ -3561,9 +4299,19 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     if (!state.orbDamage) return;
     setHits(state.hits - 1);
     state.immuneUntilT = t + IMMUNE_MS;
+    // refill light elemental on every life loss (touhou-style respawn).
+    // used to refill on every phase boundary in setPhase, which made the
+    // bomb feel like a rolling currency instead of a per-life resource.
+    // moved here so each death/respawn gets a fresh pool and a phase
+    // advance carries whatever pips you have through
+    setBombs(3);
     // respawn to initial spawn area
     state.playerX = 0;
     state.playerY = 0;
+    // reset facing -- player snaps to center on respawn, isn't moving
+    state.facing = 'idle';
+    state.lastFacing = 'idle';
+    playerEl.setAttribute('data-facing', 'idle');
     // pop effect -- 220ms animation, then clear the flag so it can
     // re-trigger on the next damage
     playerEl.setAttribute('data-popped', 'true');
@@ -3593,6 +4341,9 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     setBombs(3); setHits(5); setBoss(1); setOutput(1);
     state.playerX = 0;
     state.playerY = 0;
+    state.facing = 'idle';
+    state.lastFacing = 'idle';
+    playerEl.setAttribute('data-facing', 'idle');
     state.immuneUntilT = 0;
     for (const b of state.bullets) b.el.remove();
     state.bullets.length = 0;
@@ -5268,7 +6019,9 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
   // fire one volley from a gate -- 2 densely-packed lines of 3 orbs.
   // each line aims at the player's CURRENT position with a small
   // angular fan between the lines, and stacks 3 orbs behind the lead
-  // along the firing direction so the volley reads as two columns
+  // along the firing direction so the volley reads as two columns.
+  // late in the section each line picks up a random aim error so the
+  // gates start spraying past the player -- the boss is tiring
   function fireGateVolley(gx, gy, t) {
     const vh = window.innerHeight / 100;
     const ph = getPlayerHitboxPx();
@@ -5279,10 +6032,23 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     const fan = PHASE_5B_LINE_FAN_DEG * Math.PI / 180;
     const halfFan = fan / 2;
     const stackPx = PHASE_5B_ORB_STACK_VH * vh;
+    // section progress -- 0 at gate-storm start, 1 at scheduled end.
+    // durMs from the active program section so we don't hard-code 21000
+    const sec = state.activeProgram[state.sectionIdx];
+    const secDur = (sec && sec.durMs) ? sec.durMs : 21000;
+    const progress = Math.min(1, Math.max(0, (t - state.sectionStartT) / secDur));
+    const jitterScale = Math.pow(progress, PHASE_5B_AIM_JITTER_CURVE);
+    const maxJitterRad = PHASE_5B_AIM_JITTER_MAX_DEG * Math.PI / 180;
     for (let l = 0; l < PHASE_5B_LINES_PER_VOLLEY; l++) {
-      const lineAngle = (PHASE_5B_LINES_PER_VOLLEY <= 1)
+      const baseAngle = (PHASE_5B_LINES_PER_VOLLEY <= 1)
         ? aimAngle
         : aimAngle - halfFan + (l / (PHASE_5B_LINES_PER_VOLLEY - 1)) * fan;
+      // uniform offset in [-1,1] * scaled jitter. independent per line
+      // and per volley -- early gates still aim at the player; by the
+      // end of the section the offset can hit the full +/- 180 so lines
+      // fire off in any direction (some columns end up rocketing away
+      // from the player entirely, others tangent past)
+      const lineAngle = baseAngle + (Math.random() * 2 - 1) * maxJitterRad * jitterScale;
       const dirX = Math.cos(lineAngle);
       const dirY = Math.sin(lineAngle);
       const vx = dirX * speed;
@@ -5532,6 +6298,14 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       state.nextClimaxPuddleT = t + 200;
       state.roamTowerSpawned = 0;
       state.patternName = 'phase7a-climax';
+    } else if (sec.kind === 'spiral') {
+      // phase 7a finale -- spiral attack. tendril snags + drags player
+      // to center, then wedges form a spiral around them, inward sweep
+      // with two-phase acceleration, sphere moment, layered ring burst.
+      // full lifecycle is ~33s. spawnSpiral initializes all state +
+      // spawns the wedge field
+      spawnSpiral(t);
+      state.patternName = 'spiral';
     } else if (sec.kind === 'iron-maiden') {
       // phase 7b ultimate 1 -- concurrent telescoping rings. brief
       // grace, then the first ring spawns at the arena boundary;
@@ -5544,18 +6318,21 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       state.lastMaidenExitSide = null;
       state.patternName = 'iron-maiden';
     } else if (sec.kind === 'snake-curve') {
-      // phase 7b ultimate 2 -- snake-curve trails. seed FOUR prongs
-      // from the BOSS SPRITE in cardinal directions, then trickle
-      // additional prongs over the section so the count grows. the
-      // initial 4 don't saturate the grid alone within 24s, but the
-      // trickle pushes the last unfilled corridors closed right as
-      // the timer expires
+      // phase 7b ultimate 2 -- shadows in shadows. seed 4 snakes per
+      // PHASE_7B_SNAKE_INIT_PRONGS: 1 LEFT + 1 RIGHT from boss
+      // center, 2 DOWN spawned a row below boss with horizontal
+      // offsets (so they don't collide with the LEFT/RIGHT pair).
+      // each snake goes straight until wall or fill -- the section
+      // opens with this deterministic skeleton, then random branches
+      // start firing once all 4 seeds retire
       const bc = bossCenterPx();
+      const vhPx = window.innerHeight / 100;
       clearSnakes();
-      for (const d of PHASE_7B_SNAKE_PRONG_DIRS) {
-        spawnSnake(t, bc.x, bc.y, d);
+      for (const p of PHASE_7B_SNAKE_INIT_PRONGS) {
+        spawnSnake(t, bc.x + p.oxVh * vhPx, bc.y + p.oyVh * vhPx, p.dir);
       }
-      state.nextSnakeTrickleT = t + PHASE_7B_SNAKE_TRICKLE_MS;
+      state.phase8InitialsRetired = false;
+      state.nextSnakeBranchT = t + PHASE_7B_SNAKE_BRANCH_MS;
       state.patternName = 'snake-curve';
     } else if (sec.kind === 'climax') {
       // phase 6 closer -- everything layered. split-crosses open at
@@ -5654,12 +6431,13 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     if      (elapsed < 12000) state.patternName = 'diagonal';
     else if (elapsed < 22000) state.patternName = 'wedge';
     else if (elapsed < 33000) state.patternName = 'diagonal';
-    else if (elapsed < 39000) state.patternName = 'wedge';
+    else if (elapsed < 39000) state.patternName = 'wedge-impale';  // was 'wedge' (the duplicate)
     else                       state.patternName = 'spiral';
     switch (state.patternName) {
-      case 'diagonal': pattern_diagonal(t); break;
-      case 'wedge':    pattern_wedge(t);    break;
-      case 'spiral':   pattern_spiral(t);   break;
+      case 'diagonal':     pattern_diagonal(t); break;
+      case 'wedge':        pattern_wedge(t);    break;
+      case 'wedge-impale': tickWedgeImpale(t, 'singleton'); break;
+      case 'spiral':       pattern_spiral(t);   break;
     }
   }
 
@@ -5677,6 +6455,19 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     // glide kicks in this same frame -- avoids a one-frame jitter
     // where the old phase's steady-state position writes first
     const cap = PHASE_DURATION_MS[state.phase];
+    // debug -- once per second, log the auto-advance check for every
+    // phase. catches "timer reaches end but phase doesn't advance" --
+    // shows whether cap, elapsed, and the guard match what we expect
+    if (Math.floor(t / 1000) !== Math.floor((t - 16) / 1000)) {
+      // eslint-disable-next-line no-console
+      console.log('[hole2-sync] phase tick', {
+        phase: state.phase,
+        elapsedMs: Math.floor(t - state.phaseStartT),
+        cap,
+        wouldAdvance: cap != null && t - state.phaseStartT >= cap && state.phase < PHASE_MAX,
+        transitionRemainMs: Math.max(0, Math.floor(state.transitionUntilT - t))
+      });
+    }
     if (cap != null && t - state.phaseStartT >= cap && state.phase < PHASE_MAX) {
       setPhase(state.phase + 1);
     }
@@ -5754,8 +6545,11 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
           pattern_diagonal(t, PHASE_3_INTERLUDE_DIAGONAL_INTERVAL_MS);
           state.patternName = 'interlude-diagonal';
         } else {
-          pattern_wedge(t, PHASE_3_INTERLUDE_WEDGE_INTERVAL_MS);
-          state.patternName = 'interlude-wedge';
+          // chain wedge-impale -- replaces the duplicate wedge pattern.
+          // 8 sequential casts at 900ms cadence fills the 8s interlude
+          // wedge slot
+          tickWedgeImpale(t, 'chain');
+          state.patternName = 'interlude-wedge-impale';
         }
         if (t >= state.nextInterludePlusT) {
           for (let i = 0; i < PHASE_3_INTERLUDE_PLUS_TRIO_COUNT; i++) {
@@ -5801,11 +6595,23 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
       const sec = state.activeProgram[state.sectionIdx];
       const sectionElapsed = t - state.sectionStartT;
       if (state.phase3Mode === 'split-cross-volley') {
-        // fire one split cross every VOLLEY_INTERVAL, up to sec.count
+        // fire up to sec.count crosses. when sec.burstSize is set,
+        // the spawn-spacing flips: tight BURST_GAP_MS within a burst,
+        // longer BURST_INTERBURST_MS between bursts. without burstSize
+        // we fall back to the steady VOLLEY_INTERVAL_MS cadence
         if (sec && state.splitCrossSpawned < (sec.count || 1) && t >= state.nextSplitCrossT) {
           spawnSplitCross(t);
           state.splitCrossSpawned++;
-          state.nextSplitCrossT = t + PHASE_6_VOLLEY_INTERVAL_MS;
+          if (sec.burstSize) {
+            // intoBurst === 0 means we just closed a burst -- wait
+            // the longer inter-burst gap before kicking off the next
+            const intoBurst = state.splitCrossSpawned % sec.burstSize;
+            state.nextSplitCrossT = t + (intoBurst === 0
+              ? PHASE_6_BURST_INTERBURST_MS
+              : PHASE_6_BURST_GAP_MS);
+          } else {
+            state.nextSplitCrossT = t + PHASE_6_VOLLEY_INTERVAL_MS;
+          }
         }
         state.patternName = 'split-cross';
       } else if (state.phase3Mode === 'cursor-volley') {
@@ -5910,12 +6716,17 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
           state.nextClimaxPuddleT = t + PHASE_7A_PUDDLE_DENSE_MS;
         }
         state.patternName = 'phase7a-climax';
+      } else if (state.phase3Mode === 'spiral') {
+        // spiral attack lifecycle -- snag/pull/formation/release ->
+        // sweep -> sphere -> reverse rings -> fade. self-contained
+        updateSpiralPattern(t);
+        state.patternName = 'spiral';
       } else {
         state.patternName = 'phase-7a-end';
       }
     }
     else if (state.phase === 8) {
-      // phase 7b TODESREIGEN + UNTERGANG -- SHADE'S EMBRACE + DEATHTHROES.
+      // phase 7b TODESREIGEN + UNTERGANG -- SHADE'S EMBRACE + SHADOWS IN SHADOWS.
       // each section runs its own mechanic. boss + hud stay visible
       // across both so damage dealt during iron-maiden carries into
       // deaththroes
@@ -5975,24 +6786,55 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     const t = _gameNow();
     const dt = Math.min(64, t - lastT) / 1000;
     lastT = t;
+    const vh = window.innerHeight / 100;
+    // dx/dy declared at function scope so the facing code below can
+    // read them whether or not the spiral hold path ran
     const dx = (state.pressed.right ? 1 : 0) - (state.pressed.left ? 1 : 0);
     const dy = (state.pressed.down  ? 1 : 0) - (state.pressed.up   ? 1 : 0);
-    const vh = window.innerHeight / 100;
-    // shift clutches movement -- slower + more precise. higher
-    // output levels will also use shift to tighten bullet spread
-    const speedMult = state.pressed.shift ? SHIFT_SPEED_MULT : 1;
-    if (dx !== 0) state.playerX += dx * SPEED_VH_PER_SEC * vh * dt * speedMult;
-    if (dy !== 0) state.playerY += dy * SPEED_VH_PER_SEC * vh * dt * speedMult;
-    // clamp x + y to box-edge-hugging ranges
-    const xMax = MAX_X_VH * vh;
-    const yMin = MIN_Y_VH * vh;
-    const yMax = MAX_Y_VH * vh;
-    if (state.playerX >  xMax) state.playerX =  xMax;
-    if (state.playerX < -xMax) state.playerX = -xMax;
-    if (state.playerY <  yMin) state.playerY =  yMin;
-    if (state.playerY >  yMax) state.playerY =  yMax;
-    playerEl.style.setProperty('--player-x', state.playerX.toFixed(2) + 'px');
-    playerEl.style.setProperty('--player-y', state.playerY.toFixed(2) + 'px');
+    // spiral telegraph override -- tendril holds the player. snag pins,
+    // pull lerps to center, formation keeps at center. only runs when
+    // the spiral is in its hold window; releases for sweep onward and
+    // never fires outside phase 7 spiral mode
+    if (spiralHoldingPlayer()) {
+      const elapsed = t - state.spiralStartT;
+      const center = spiralCenterPlayer();  // player-coord arena center
+      if (elapsed < SPIRAL_SNAG_MS) {
+        state.playerX = state.spiralSnagOriginX;
+        state.playerY = state.spiralSnagOriginY;
+      } else if (elapsed < SPIRAL_SNAG_MS + SPIRAL_PULL_MS) {
+        const k = (elapsed - SPIRAL_SNAG_MS) / SPIRAL_PULL_MS;
+        const e = k * k * (3 - 2 * k);
+        state.playerX = state.spiralSnagOriginX + (center.x - state.spiralSnagOriginX) * e;
+        state.playerY = state.spiralSnagOriginY + (center.y - state.spiralSnagOriginY) * e;
+      } else {
+        state.playerX = center.x;
+        state.playerY = center.y;
+      }
+      playerEl.style.setProperty('--player-x', state.playerX.toFixed(2) + 'px');
+      playerEl.style.setProperty('--player-y', state.playerY.toFixed(2) + 'px');
+    } else {
+      // normal input-driven movement
+      const speedMult = state.pressed.shift ? SHIFT_SPEED_MULT : 1;
+      if (dx !== 0) state.playerX += dx * SPEED_VH_PER_SEC * vh * dt * speedMult;
+      if (dy !== 0) state.playerY += dy * SPEED_VH_PER_SEC * vh * dt * speedMult;
+      const xMax = MAX_X_VH * vh;
+      const yMin = MIN_Y_VH * vh;
+      const yMax = MAX_Y_VH * vh;
+      if (state.playerX >  xMax) state.playerX =  xMax;
+      if (state.playerX < -xMax) state.playerX = -xMax;
+      if (state.playerY <  yMin) state.playerY =  yMin;
+      if (state.playerY >  yMax) state.playerY =  yMax;
+      playerEl.style.setProperty('--player-x', state.playerX.toFixed(2) + 'px');
+      playerEl.style.setProperty('--player-y', state.playerY.toFixed(2) + 'px');
+    }
+    // facing -- driven by horizontal input only. no input = idle even
+    // mid-vertical-strafe, since the sprite set only has left/right/idle
+    // and "facing up" doesn't really exist. only writes when changed
+    state.facing = dx < 0 ? 'left' : dx > 0 ? 'right' : 'idle';
+    if (state.facing !== state.lastFacing) {
+      playerEl.setAttribute('data-facing', state.facing);
+      state.lastFacing = state.facing;
+    }
 
     // fire stream -- output level 1: single bullet every
     // FIRE_INTERVAL_MS while z is held. higher levels will branch on

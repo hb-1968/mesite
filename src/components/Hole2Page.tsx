@@ -413,6 +413,16 @@ function useHole2Music(videoId: string) {
                 playerRef.current?.playVideo?.();
               } catch { /* ignore */ }
             }
+            // state 1 = playing. if we asked for pause but the player
+            // flipped back to playing on its own -- happens on tabs
+            // that have been backgrounded long enough for YT's
+            // internal buffer/recovery logic to kick the video back
+            // alive -- re-issue pauseVideo() so the pause sticks.
+            // without this the engine stays paused (overlay still up)
+            // but the boss track quietly resumes in the background
+            if (e?.data === 1 && pausedRef.current) {
+              try { playerRef.current?.pauseVideo?.(); } catch { /* ignore */ }
+            }
           }
         }
       }) as typeof playerRef.current;
@@ -476,13 +486,23 @@ function useHole2Music(videoId: string) {
   // boot-time setPhase(1) lands in this case and the music just starts
   // at 0 naturally
   const seek = useCallback((seconds: number, opts?: { minDeltaSec?: number }) => {
+    // eslint-disable-next-line no-console
+    console.log('[hole2-sync] seek called', { seconds, ready: readyRef.current, hasPlayer: !!playerRef.current });
     if (!readyRef.current) return;
     const minDelta = opts?.minDeltaSec ?? 1.0;
     try {
       const cur = playerRef.current?.getCurrentTime?.() ?? 0;
-      if (Math.abs(cur - seconds) < minDelta) return;
+      const delta = Math.abs(cur - seconds);
+      // eslint-disable-next-line no-console
+      console.log('[hole2-sync] seek gate', { cur, target: seconds, delta, minDelta, willSeek: delta >= minDelta });
+      if (delta < minDelta) return;
       playerRef.current?.seekTo?.(seconds, true);
-    } catch { /* ignore */ }
+      // eslint-disable-next-line no-console
+      console.log('[hole2-sync] seekTo issued', seconds);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log('[hole2-sync] seek threw', err);
+    }
   }, []);
 
   return { play, pause, resume, stop, restart, seek, containerId };
@@ -601,7 +621,17 @@ export function Hole2Page() {
   // the seek itself gates on a small delta inside useHole2Music, so
   // natural timer advances (where the music is already at the target)
   // don't hitch -- only desync-worthy jumps actually move the playhead
-  const handlePhaseChange = useCallback((_newPhase: number, canonicalSongSec: number) => {
+  const handlePhaseChange = useCallback((newPhase: number, canonicalSongSec: number) => {
+    // eslint-disable-next-line no-console
+    console.log('[hole2-sync] handlePhaseChange received', { newPhase, canonicalSongSec });
+    // diagnostic kill-switch -- set window.__skipSeek = true in the
+    // console to disable music seek entirely. lets us test whether the
+    // seek itself is what's destabilizing phase advances
+    if ((window as unknown as { __skipSeek?: boolean }).__skipSeek) {
+      // eslint-disable-next-line no-console
+      console.log('[hole2-sync] seek SKIPPED via window.__skipSeek');
+      return;
+    }
     seekBossMusic(canonicalSongSec);
   }, [seekBossMusic]);
 
@@ -921,38 +951,21 @@ function BeginBox({ onBegin }: { onBegin: (e: React.MouseEvent) => void }) {
 
 // ---- player placeholder ---------------------------------------------
 // pre-BEGIN preview of where the player will stand inside the arena.
-// uses the same white humanoid SVG the engine renders for the real
-// player -- the boss sprite (sprite.png) belongs to the boss only.
-// the slide-up animation was removed -- the engine mounts directly to
-// the player's resting position on BEGIN, so there's no need to
-// telegraph the move
+// uses the SAME PNG sprite the engine renders (player-idle.png) so
+// the visual snap on BEGIN is invisible -- placeholder and engine
+// player are pixel-identical
+const HOLE2_PLAYER_IDLE_URL = `${import.meta.env.BASE_URL}player-idle.png`;
 function HolePlayer() {
   return (
     <div className="hole2-player" aria-hidden="true">
-      <svg
+      <img
         className="hole2-player__body"
-        viewBox="0 0 16 22"
-        xmlns="http://www.w3.org/2000/svg"
-        shapeRendering="crispEdges"
+        src={HOLE2_PLAYER_IDLE_URL}
+        alt=""
+        draggable={false}
         aria-hidden="true"
-      >
-        {/* same humanoid the engine's #player renders. matching
-            geometry so the placeholder lands where the engine takes
-            over -- no visual snap on BEGIN */}
-        <rect x="6" y="2"  width="4" height="4" fill="#fff" />
-        <rect x="7" y="6"  width="2" height="1" fill="#fff" />
-        <rect x="4" y="7"  width="8" height="2" fill="#fff" />
-        <rect x="5" y="9"  width="6" height="5" fill="#fff" />
-        <rect x="3" y="8"  width="1" height="5" fill="#fff" />
-        <rect x="12" y="8" width="1" height="5" fill="#fff" />
-        <rect x="2"  y="12" width="2" height="2" fill="#fff" />
-        <rect x="12" y="12" width="2" height="2" fill="#fff" />
-        <rect x="5" y="14" width="6" height="2" fill="#fff" />
-        <rect x="5" y="16" width="2" height="4" fill="#fff" />
-        <rect x="9" y="16" width="2" height="4" fill="#fff" />
-        <rect x="4" y="20" width="4" height="2" fill="#fff" />
-        <rect x="8" y="20" width="4" height="2" fill="#fff" />
-      </svg>
+        style={{ imageRendering: 'pixelated' as any }}
+      />
     </div>
   );
 }
@@ -1139,6 +1152,17 @@ function ArenaHud({ ready }: { ready: boolean }) {
       aria-hidden="true"
     >
       <div className="hud">
+        {/* now-playing strip preview -- same static ost title as the
+            live hud so BEGIN doesn't visibly snap the label */}
+        <div className="hud__track">
+          <div className="hud__track-cd" aria-hidden="true">
+            <div className="hud__track-cd-face" />
+            <div className="hud__track-cd-hole" />
+          </div>
+          <div className="hud__track-name">
+            Phantom Dance -ouster - Oblivion (CODE ZTS LABEL)
+          </div>
+        </div>
         {/* top lane -- thin health bar + timer right. health at 100%,
             timer shows the phase-1 cap (52s = 00:52) the engine will
             count down from, so BEGIN doesn't visibly snap the timer */}

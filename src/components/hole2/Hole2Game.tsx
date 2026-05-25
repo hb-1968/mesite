@@ -12,6 +12,12 @@ import { startHole2Engine, type Hole2EngineHandle } from './engine';
 // arena now also IS the figure the engine controls
 const SPRITE_URL = `${import.meta.env.BASE_URL}sprite.png`;
 
+// player sprites -- three 16x22 pngs, same footprint as the old inline
+// svg. engine writes data-facing on .player; css picks which one paints
+const PLAYER_IDLE_URL  = `${import.meta.env.BASE_URL}player-idle.png`;
+const PLAYER_LEFT_URL  = `${import.meta.env.BASE_URL}player-left.png`;
+const PLAYER_RIGHT_URL = `${import.meta.env.BASE_URL}player-right.png`;
+
 type Hole2GameProps = {
   // fired the moment the player drains the boss bar in PHASE_MAX. the
   // page-level state lifts this into rendering the win overlay
@@ -89,39 +95,31 @@ export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightRese
             crosses <15%; drift down; player collects to bump GLOBE LVL */}
         <div className="bullets" id="globes" aria-hidden="true" />
 
-        <div className="player" id="player">
-          {/* placeholder player sprite -- pure-white pixel humanoid,
-              blocky + symmetric so the green torso hitbox lands cleanly.
-              same SVG as the testbed -- final art replaces this */}
-          <svg
-            className="player__svg"
-            viewBox="0 0 16 22"
-            xmlns="http://www.w3.org/2000/svg"
-            shapeRendering="crispEdges"
+        <div className="player" id="player" data-facing="idle">
+          {/* three 16x22 sprites stacked at the same position. css picks
+              which one paints based on .player[data-facing]. engine
+              writes data-facing each frame from horizontal input dir */}
+          <img
+            className="player__sprite player__sprite--idle"
+            src={PLAYER_IDLE_URL}
+            alt=""
+            draggable={false}
             aria-hidden="true"
-          >
-            {/* head */}
-            <rect x="6" y="2"  width="4" height="4" fill="#fff" />
-            {/* neck */}
-            <rect x="7" y="6"  width="2" height="1" fill="#fff" />
-            {/* shoulders + torso block */}
-            <rect x="4" y="7"  width="8" height="2" fill="#fff" />
-            <rect x="5" y="9"  width="6" height="5" fill="#fff" />
-            {/* arms (held to sides) */}
-            <rect x="3" y="8"  width="1" height="5" fill="#fff" />
-            <rect x="12" y="8" width="1" height="5" fill="#fff" />
-            {/* hands */}
-            <rect x="2"  y="12" width="2" height="2" fill="#fff" />
-            <rect x="12" y="12" width="2" height="2" fill="#fff" />
-            {/* hips */}
-            <rect x="5" y="14" width="6" height="2" fill="#fff" />
-            {/* legs */}
-            <rect x="5" y="16" width="2" height="4" fill="#fff" />
-            <rect x="9" y="16" width="2" height="4" fill="#fff" />
-            {/* feet */}
-            <rect x="4" y="20" width="4" height="2" fill="#fff" />
-            <rect x="8" y="20" width="4" height="2" fill="#fff" />
-          </svg>
+          />
+          <img
+            className="player__sprite player__sprite--left"
+            src={PLAYER_LEFT_URL}
+            alt=""
+            draggable={false}
+            aria-hidden="true"
+          />
+          <img
+            className="player__sprite player__sprite--right"
+            src={PLAYER_RIGHT_URL}
+            alt=""
+            draggable={false}
+            aria-hidden="true"
+          />
           <div className="player__hitbox" aria-hidden="true" />
           {/* lance telegraph -- shadow overlay that lengthens off the
               player at the incoming lance's angle. red outline hints at
@@ -145,6 +143,19 @@ export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightRese
         </div>
 
         <div className="hud" id="hud" aria-hidden="true">
+          {/* now-playing strip -- rotating cd + the boss-fight ost
+              title. static across the whole fight; matches the yt
+              video that plays under everything (BOSS_VIDEO_ID).
+              cd spin is css-only, runs ambient */}
+          <div className="hud__track" id="track-display">
+            <div className="hud__track-cd" aria-hidden="true">
+              <div className="hud__track-cd-face" />
+              <div className="hud__track-cd-hole" />
+            </div>
+            <div className="hud__track-name" id="track-name">
+              Phantom Dance -ouster - Oblivion (CODE ZTS LABEL)
+            </div>
+          </div>
           {/* top lane -- thin health bar (left) + timer (right) */}
           <div className="hud__top">
             <div className="hud__health">
@@ -193,6 +204,7 @@ export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightRese
               <div className="hud__ctrl"><kbd>Shift</kbd> clutch</div>
               <div className="hud__ctrl"><kbd>Z</kbd> fire</div>
               <div className="hud__ctrl"><kbd>X</kbd> bomb</div>
+              <div className="hud__ctrl"><kbd>R</kbd> restart</div>
             </div>
           </div>
         </div>

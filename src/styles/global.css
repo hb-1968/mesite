@@ -2963,13 +2963,26 @@ html.hole-exit-white-in::before {
        top */
     --hitbox-color: var(--hitbox-green);
   }
-  .player__svg {
-    display: block;
+  /* three 16x22 pngs stacked at the same spot. only the one matching
+     [data-facing] paints; the other two sit at opacity 0. inset:0 over
+     the .player box keeps the hitbox + lance-telegraph layout intact */
+  .player__sprite {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
+    display: block;
+    opacity: 0;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.15));
+    pointer-events: none;
+    user-select: none;
+  }
+  .player[data-facing="idle"]  .player__sprite--idle,
+  .player[data-facing="left"]  .player__sprite--left,
+  .player[data-facing="right"] .player__sprite--right {
+    opacity: 1;
   }
   /* immunity flicker -- after taking a hit the player gets 3s of
      invulnerability; data-immune=true drives a fast opacity toggle so
@@ -2978,11 +2991,11 @@ html.hole-exit-white-in::before {
   .player[data-immune="true"] {
     animation: player-flicker 110ms steps(2) infinite;
   }
-  /* "pop" effect -- runs once on the inner svg when the player takes
-     damage. brief scale + brightness flash so the hit reads visually
-     before the respawn snap + flicker kick in. applied to .player__svg
-     so the outer .player can still hold its translate transform */
-  .player[data-popped="true"] .player__svg {
+  /* "pop" effect -- runs once on the visible sprite when the player
+     takes damage. brief scale + brightness flash. animates all three
+     stacked imgs but only the visible one actually shows it; cheaper
+     than reading data-facing in css to scope precisely */
+  .player[data-popped="true"] .player__sprite {
     animation: player-pop 220ms ease-out;
   }
 
@@ -3196,6 +3209,57 @@ html.hole-exit-white-in::before {
       0 0 8px rgba(0, 0, 0, 0.75),
       inset 0 0 4px rgba(255, 255, 255, 0.08);
   }
+  /* spiral-wedge -- phase 7a finale. solid black isoceles triangles
+     for the inward sweep + outward burst rings. transform set per
+     wedge from engine.ts each frame. opacity gates formation reveal
+     and post-arrival hide. base sweep wedges are slightly wider than
+     the reverse-ring variant since they form the spiral arms */
+  .spiral-wedge {
+    position: absolute;
+    left: 0; top: 0;
+    width: 2vh;
+    height: 3vh;
+    margin-left: -1vh;
+    margin-top: -1.5vh;
+    clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+    background: #000;
+    pointer-events: none;
+    z-index: 4;
+    will-change: transform, opacity;
+  }
+  .spiral-wedge-reverse {
+    /* narrower so the 32-48 wedges per ring leave player-sized gaps */
+    width: 1.4vh;
+    margin-left: -0.7vh;
+  }
+  .spiral-wedge[data-fading="true"] {
+    transition: opacity 220ms ease-out;
+    opacity: 0;
+  }
+
+  /* wi-spear -- wedge-impale spear (singleton phase 1 + chain phase 3
+     interlude). chunkier than spiral-wedge since each cast is only 4 of
+     them, not part of a larger field. solid black isoceles, apex
+     pointing inward at the anchor (set per frame by engine.ts) */
+  .wi-spear {
+    position: absolute;
+    left: 0; top: 0;
+    width: 2.6vh;
+    height: 11vh;
+    margin-left: -1.3vh;
+    margin-top: -5.5vh;
+    clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+    background: #000;
+    pointer-events: none;
+    z-index: 4;
+    will-change: transform, opacity;
+    filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
+  }
+  .wi-spear[data-fading="true"] {
+    transition: opacity 220ms ease-out;
+    opacity: 0;
+  }
+
   /* big variant -- chunkier orbs for the phase-3 closing spiral. same
      ink, just scaled up so the winding arms read at climax weight */
   .shadow-orb--big {
@@ -3936,6 +4000,91 @@ html.hole-exit-white-in::before {
   }
   .hole2-game[data-ready="true"] .hud {
     opacity: 1;
+  }
+
+  /* now-playing strip -- rotating cd icon + current movement title.
+     sits one lane above hud__top so the order top-down is: track-name,
+     health bar + timer, arena box. engine writes the title text into
+     #track-name on every setPhase, so the strip follows the boss music's
+     phase-synced opera movements (OUVERTURE / ARIE / STURMSZENE / ...).
+     spans the same x-range as the health/timer lane below it for a
+     clean vertical stack */
+  .hud__track {
+    position: absolute;
+    top: calc(var(--box-top) - 7.6vh);
+    left: var(--box-left);
+    right: calc(100% - var(--box-right));
+    height: 2.4vh;
+    display: flex;
+    align-items: center;
+    gap: 1vh;
+    font-family: var(--font-body);
+    color: var(--hud-fg);
+  }
+  /* cd icon -- 2.2vh disc with a conic-gradient sheen so the rotation
+     reads (otherwise a perfectly symmetric disc looks static). center
+     hole sits on top via dom order. spin runs ambient, infinite */
+  .hud__track-cd {
+    position: relative;
+    flex: 0 0 auto;
+    width: 2.2vh;
+    height: 2.2vh;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 230, 180, 0.55);
+    box-shadow:
+      0 0 0 1px rgba(0, 0, 0, 0.6) inset,
+      0 0 4px rgba(255, 230, 180, 0.28);
+    animation: hud-cd-spin 3.2s linear infinite;
+    will-change: transform;
+  }
+  /* reflective surface -- conic sweep of amber sheens against dark
+     gives the spinning-disc tell */
+  .hud__track-cd-face {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(
+      from 0deg,
+      rgba(20, 12, 6, 0.95)   0deg,
+      rgba(255, 230, 180, 0.55)  35deg,
+      rgba(20, 12, 6, 0.95)  70deg,
+      rgba(255, 230, 180, 0.32) 130deg,
+      rgba(20, 12, 6, 0.95) 180deg,
+      rgba(255, 230, 180, 0.5) 240deg,
+      rgba(20, 12, 6, 0.95) 290deg,
+      rgba(255, 230, 180, 0.32) 340deg,
+      rgba(20, 12, 6, 0.95) 360deg);
+  }
+  /* spindle hole -- small dark dot dead-center. doesn't rotate
+     visibly but lives inside the spinning wrapper so it's free */
+  .hud__track-cd-hole {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 28%;
+    height: 28%;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    background: #060406;
+    box-shadow: 0 0 0 1px rgba(255, 230, 180, 0.42);
+  }
+  /* movement title -- mirrors the phase caption, single line. ellipsis
+     if it ever overflows the available width (shouldn't at full vh) */
+  .hud__track-name {
+    flex: 1 1 auto;
+    font-size: 1.5vh;
+    letter-spacing: 0.08em;
+    line-height: 1;
+    text-transform: uppercase;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-shadow: 0 0 6px rgba(255, 230, 180, 0.18);
+    opacity: 0.85;
+  }
+  @keyframes hud-cd-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
   }
 
   /* top lane -- flex row sitting just above the box, spanning its

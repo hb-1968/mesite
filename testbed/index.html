@@ -1603,7 +1603,9 @@
                                //   { el, x1, y1, x2, y2, thickness, dirRad } in arena px
     snakeGrid:           null, // 12x12 Int16Array of trail-density per cell
     snakeGridCfg:        null, // { cols, rows, cellW, cellH, originX, originY, thickness } cached
-    nextSnakeTrickleT:   0,    // ms timestamp; next continuous-spawn prong fires when t >= this
+    nextSnakeBranchT:    0,    // ms timestamp; next deterministic-branch step fires when t >= this
+    snakeBranchIdx:      0,    // monotonic counter; deterministic tiebreaker for perpendicular side
+    phase8InitialsRetired: false, // flips true once all 4 INIT_PRONGS terminate; gates branching
     activeProgram:       [],   // current section list driving pattern_phase3b. set
                                //   in setPhase per phase (PHASE_3_PROGRAM, PHASE_4_PROGRAM,
                                //   PHASE_5_PROGRAM, ...). empty list = no program-driven
@@ -1832,7 +1834,7 @@
 
   // shadow-orb speed + sizes per pattern. tunable
   const ORB_SPEED_DIAGONAL_VH = 34;
-  const ORB_SPEED_WEDGE_VH    = 42;
+  const ORB_SPEED_WEDGE_VH    = 30;  // dropped from 42 -- wedge aims at the player + fans, so 42 left no dodge window. 30 puts it just under diagonal (34), which feels right since wedge is the aimed one
   const ORB_SPEED_SPIRAL_VH   = 28;
 
   // diagonal pattern -- 5-orb row per volley, alternating left/right
@@ -1845,6 +1847,13 @@
   const WEDGE_INTERVAL_MS     = 680;
   const WEDGE_SPREAD_DEG      = 18;
   const WEDGE_COUNT           = 5;
+  // phase 1 wedge slowdown -- orbs launch at full ORB_SPEED_WEDGE_VH
+  // then decay toward WEDGE_MIN_SPEED_VH on a 600ms half-life. so they
+  // hit hard near the boss + drift slow by the time they reach the
+  // bottom of the arena. only applied to the default (phase 1) wedge;
+  // phase 3 interlude wedge keeps constant-velocity behavior
+  const WEDGE_DECEL_HALF_LIFE_MS = 600;
+  const WEDGE_MIN_SPEED_VH       = 10;
 
   // spiral pattern -- continuous rotating pair
   const SPIRAL_INTERVAL_MS    = 110;
@@ -2293,7 +2302,7 @@
     // ends at 5:44, leaving 2s headroom into the 5:46 phase 8 boundary
   ];
 
-  // phase 7b TODESREIGEN + UNTERGANG -- SHADE'S EMBRACE + DEATHTHROES. the pair of ultimates.
+  // phase 7b TODESREIGEN + UNTERGANG -- SHADE'S EMBRACE + SHADOWS IN SHADOWS. the pair of ultimates.
   //   shade's embrace: in lore a sphere of shadow that wraps the
   //     player and pries them apart from inside, like an iron maiden
   //     -- "embrace" carries the iron-maiden idiom + the vampire-
@@ -2312,11 +2321,26 @@
   //     side, so the chain of escapes isn't a single repeating motion.
   //     survivable -- player outpaces the shrink, and a hit by one
   //     ring is one damage hit, not a chain-end
-  //   deaththroes: snake-curve trails seek the player + multiply over
-  //     time, like a hilbert curve filling space. each snake stops
-  //     when its head hits a trail (own or another). leading snakes
-  //     into self-collision is the only escape -- if the boss isn't
-  //     killed by the timer, the arena fills entirely
+  //   deaththroes: 4 SEED snakes go straight in fixed directions --
+  //     1 LEFT + 1 RIGHT from boss center along the boss row, plus
+  //     2 going DOWN spawned one row below boss center in ADJACENT
+  //     cells (the "two in the middle" -- attached, not separated,
+  //     so the arena doesn't read as 4 quadrants). all movement is
+  //     fully DETERMINISTIC: snakes don't turn. each one terminates
+  //     when its head leaves the inner box or enters a cell another
+  //     snake already filled (head clamps flush with the wall/cell
+  //     boundary so trails meet without slivers).
+  //     DETERMINISTIC GREEDY BISECTION kicks in only ONCE ALL 4
+  //     SEEDS HAVE TERMINATED. each BRANCH_MS, branchOneSnake does
+  //     a look-ahead across (trail, u in U_CANDIDATES, perp side)
+  //     triples, predicting how far a perpendicular branch would
+  //     extend before hitting a wall or filled cell. the LONGEST
+  //     predicted branch wins -- so spawns naturally land at trail
+  //     ENDS facing open arena and run all the way to the wall,
+  //     not at midpoints where they'd stop halfway. tiebreak:
+  //     lower bisectionCount first (fair distribution), then
+  //     iteration order. no Math.random anywhere -- same input
+  //     produces the same arena fill every run
   //
   // boss is hittable + the hud stays visible across BOTH spells, so
   // damage dealt in shade's embrace persists into deaththroes
@@ -2335,41 +2359,57 @@
   const PHASE_7B_MAIDEN_SPIKE_WIDTH_VH       = 3.0;   // along-edge width (un-scaled)
   const PHASE_7B_MAIDEN_SPIKE_LENGTH_VH      = 4.0;   // perpendicular length (un-scaled)
   const PHASE_7B_MAIDEN_BOX_COLLAPSE_MS      = 280;   // fade window for a vanishing box
-  // deaththroes snake pacing. movement is GRID-ALIGNED -- each snake
-  // walks straight at constant speed, only deciding to turn when its
-  // head crosses into a new cell of a 14x14 grid covering the inner
-  // box. each turn picks the neighbor cell with the LOWEST trail
-  // density (the AVOIDANCE POLICY), so the emergent pattern reads as
-  // a hilbert / lawn-mower fill spreading across the arena.
+  // deaththroes snake pacing. movement is GRID-ALIGNED and
+  // STRAIGHT-ONLY -- each snake walks at constant speed in its
+  // spawn direction and never turns. when the head crosses into a
+  // new cell of the 12x12 grid covering the inner box, the snake
+  // terminates if that cell is out-of-box OR already filled by
+  // any snake (own start cell included for safety, though no
+  // snake re-enters its own start cell while going straight).
   //
-  // snakes are IMMORTAL -- they don't self-kill on contact. player
-  // contact damages the player, not the snake. trail thickness =
-  // max(cellW, cellH) (set in initSnakeGrid) so every cell a snake
-  // passes through gets filled border-to-border with NO surviving
-  // gap at the arena edge. tuned so the 4 prongs from boss saturate
-  // the 144-cell grid in ~22s of practical filling, fitting the 24s
-  // section budget. the board "clears" right as the timer expires
-  const PHASE_7B_SNAKE_SPEED_VH       = 9;        // slower so the rapid trickle doesn't blow
-                                                   //   past the 24s budget; constant pop-in is
-                                                   //   the headline feature now, not raw fill
-  const PHASE_7B_SNAKE_THICKNESS_VH   = 1.6;      // fallback only -- initSnakeGrid overrides
-                                                   //   with cellW (filling the cell fully)
-  const PHASE_7B_SNAKE_GRID_CELLS     = 12;       // 12x12 = 144 cells, cells ~6.5vh wide
-  const PHASE_7B_SNAKE_FORWARD_BONUS  = 0.4;      // tiebreak weight that prefers continuing
-                                                   //   straight (so snakes commit to lanes when
-                                                   //   neighbor fillness ties)
-  // 4 prong directions for the initial snake spawn from the boss.
-  // cardinals so the spread is symmetric across the arena -- the N
-  // prong reflexes off the ceiling quickly, the others have room
-  const PHASE_7B_SNAKE_PRONG_DIRS = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
-  // continuous trickle -- after the initial 4, one extra prong spawns
-  // from the boss every TRICKLE_MS in a random cardinal. CONSTANT
-  // POP-IN is the design goal: a new snake every ~500ms with a
-  // generous cap so the field stays dense, and the spirit bomb
-  // explicitly does NOT clear them (snakes are the inevitability
-  // of the deaththroes, not a clearable hazard)
-  const PHASE_7B_SNAKE_TRICKLE_MS     = 500;
-  const PHASE_7B_SNAKE_MAX_COUNT      = 16;
+  // trail thickness = max(cellW, cellH) (set in initSnakeGrid) so
+  // every cell a snake passes through gets filled border-to-border,
+  // no surviving gap at the arena edge. terminated trails stay
+  // hot for player collision -- the obstacle persists for the
+  // remainder of the section
+  const PHASE_7B_SNAKE_SPEED_VH       = 9;        // constant lane speed
+  const PHASE_7B_SNAKE_THICKNESS_VH   = 1.6;      // fallback -- initSnakeGrid overrides with cellW
+  const PHASE_7B_SNAKE_GRID_CELLS     = 12;       // 12x12 = 144 cells, ~6.5vh per cell
+  // initial 4-snake configuration. all go STRAIGHT in their spawn
+  // direction until they hit a wall or another snake's fill. the
+  // LEFT/RIGHT pair shares the boss row -- they're aimed at the
+  // outermost edges so the top bar fills wall-to-wall. the two
+  // "middle" DOWN snakes land in ADJACENT cells (no gap between
+  // them) so they read as a single 2-cell strip rather than two
+  // separated columns -- avoids the 4-region split the storyboard
+  // explicitly wanted to avoid. oyVh +7 drops them one row below
+  // boss center so they don't collide with LEFT/RIGHT on the
+  // boss row (which would terminate them after a single cell)
+  const PHASE_7B_SNAKE_INIT_PRONGS = [
+    { oxVh:   0, oyVh: 0, dir: Math.PI     }, // LEFT from boss center -> outermost left edge
+    { oxVh:   0, oyVh: 0, dir: 0           }, // RIGHT from boss center -> outermost right edge
+    { oxVh:  -3, oyVh: 7, dir: Math.PI / 2 }, // DOWN, mid-left (adjacent to mid-right)
+    { oxVh:   3, oyVh: 7, dir: Math.PI / 2 }  // DOWN, mid-right
+  ];
+  // deterministic bisection. fires only AFTER all 4 initial seeds
+  // have terminated -- the section opens with a clean skeleton,
+  // then each branch step picks the terminated trail with the
+  // LOWEST bisectionCount (ties broken by spawn order = oldest
+  // first). each trail can be bisected MAX_BISECTIONS times, at
+  // u positions [0.5, 0.25, 0.75] -- midpoint first, then quarters.
+  // multi-bisection + the tight cadence below is what gets the
+  // arena filled before the 24s timer hits 00:00
+  const PHASE_7B_SNAKE_BRANCH_MS      = 200;
+  const PHASE_7B_SNAKE_MAX_COUNT      = 128;
+  // u-candidates evaluated at every branch step. branchOneSnake
+  // does a greedy look-ahead across (trail, u, perp-side) tuples
+  // and picks the one with the LONGEST predicted perpendicular
+  // branch -- so each spawned snake extends fully to the next wall
+  // or trail instead of stopping randomly midway. the endpoints
+  // (u=0 and u=1) are included so wall-end bisections (which lay
+  // along the side edges) are reachable
+  const PHASE_7B_U_CANDIDATES         = [0, 0.25, 0.5, 0.75, 1];
+  const PHASE_7B_MAX_BISECTIONS       = 5;
 
   // phase 7b boss MOVEMENT -- still, but hovering. zero horizontal
   // drift, tiny vertical bob in y so the boss reads as alive rather
@@ -2631,7 +2671,7 @@
   function showTransition(caption, sub, durationMs) {
     // captions are trusted (PHASE_CAPTIONS constants) so innerHTML
     // is safe here -- needed to render multi-line titles (eg phase
-    // 7b's "TODESREIGEN -- SHADE'S EMBRACE<br>UNTERGANG -- DEATHTHROES")
+    // 7b's "TODESREIGEN -- SHADE'S EMBRACE<br>UNTERGANG -- SHADOWS IN SHADOWS")
     transCaptionEl.innerHTML = caption;
     transSubEl.textContent     = sub || '';
     // restart trick -- clear then set on next frame
@@ -3318,33 +3358,6 @@
     if (gx < 0 || gx >= cfg.cols || gy < 0 || gy >= cfg.rows) return;
     state.snakeGrid[gy * cfg.cols + gx]++;
   }
-  // pick the best next direction at a cell boundary. candidates =
-  // forward + perpendicular-left + perpendicular-right (no u-turn).
-  // less-filled neighbor wins; forward gets a small bonus so the
-  // snake commits to a lane rather than dithering on ties
-  function chooseSnakeDirection(snake) {
-    const dirs = [
-      snake.dirRad,                  // forward
-      snake.dirRad + Math.PI / 2,
-      snake.dirRad - Math.PI / 2
-    ];
-    let bestDir = snake.dirRad;
-    let bestScore = -Infinity;
-    for (let i = 0; i < dirs.length; i++) {
-      const d = dirs[i];
-      const dx = Math.round(Math.cos(d));
-      const dy = Math.round(Math.sin(d));
-      const ngx = snake.gx + dx;
-      const ngy = snake.gy + dy;
-      const fill = snakeFillness(ngx, ngy);
-      const score = -fill + (i === 0 ? PHASE_7B_SNAKE_FORWARD_BONUS : 0);
-      if (score > bestScore) {
-        bestScore = score;
-        bestDir = d;
-      }
-    }
-    return bestDir;
-  }
   function spawnSnake(t, originX, originY, dirRad) {
     if (!state.snakeGridCfg) initSnakeGrid();
     const cell = snakeCellAt(originX, originY) || { gx: 0, gy: 0 };
@@ -3354,10 +3367,18 @@
       dirRad,
       gx: cell.gx, gy: cell.gy,
       speed: PHASE_7B_SNAKE_SPEED_VH * (window.innerHeight / 100),
-      // immortal -- the self-kill mechanic was removed so the
-      // arena actually fills. alive flag kept on the record in
-      // case future tuning wants it back
+      // alive flag kept for legacy callers; the kill semantics live
+      // on terminated now (snake stops moving once terminated, trail
+      // stays put as a static obstacle for player collision)
       alive: true,
+      terminated: false,
+      // bisectionCount tracks how many times branchOneSnake has
+      // bisected this trail. each trail can be bisected up to
+      // PHASE_7B_MAX_BISECTIONS times, at u positions from the
+      // sequence above (0.5 then 0.25 then 0.75 ...). lowest
+      // count wins the next branch step; ties broken by spawn
+      // order, so the whole policy is fully deterministic
+      bisectionCount: 0,
       segments: [],
       lastT: t
     };
@@ -3398,94 +3419,160 @@
     });
   }
 
-  // per-frame: walk every alive snake forward, extend its current
-  // segment, decide to turn / split when timers cross. run collision
-  // for head-vs-any-segment + player-vs-any-segment
+  // greedy bisection. each branch step evaluates every (terminated
+  // trail, u in U_CANDIDATES, perp side) triple and predicts how
+  // far a perpendicular branch from that point would extend before
+  // hitting a wall or filled cell. the longest predicted branch
+  // wins -- so spawns land at trail ENDS facing open arena, not at
+  // midpoints where they collide with other bisections halfway.
+  // tiebreaks: lower bisectionCount first (fair distribution),
+  // then iteration order (spawn-order parent, then smaller u,
+  // then first perpendicular candidate). no Math.random anywhere
+  function branchOneSnake(t) {
+    if (!state.snakeGridCfg) return;
+    if (state.activeSnakes.length >= PHASE_7B_SNAKE_MAX_COUNT) return;
+    const cfg = state.snakeGridCfg;
+    let bestParent = null;
+    let bestPredLen = 0;
+    let bestPx = 0, bestPy = 0;
+    let bestDir = 0;
+    for (const parent of state.activeSnakes) {
+      if (!parent.terminated) continue;
+      if (parent.bisectionCount >= PHASE_7B_MAX_BISECTIONS) continue;
+      if (!parent.segments.length) continue;
+      let totalLen = 0;
+      for (const s of parent.segments) totalLen += Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+      if (totalLen < 0.01) continue;
+      for (const uTarget of PHASE_7B_U_CANDIDATES) {
+        // walk to position uTarget along the parent trail
+        const targetDist = totalLen * uTarget;
+        let cumulative = 0;
+        let seg = null;
+        let segU = 0;
+        for (const s of parent.segments) {
+          const len = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+          if (cumulative + len >= targetDist) {
+            seg = s;
+            segU = len > 0 ? Math.min(1, (targetDist - cumulative) / len) : 0;
+            break;
+          }
+          cumulative += len;
+        }
+        if (!seg) continue;
+        const px = seg.x1 + (seg.x2 - seg.x1) * segU;
+        const py = seg.y1 + (seg.y2 - seg.y1) * segU;
+        const cell = snakeCellAt(px, py);
+        if (!cell) continue;
+        const dirCands = [seg.dirRad + Math.PI / 2, seg.dirRad - Math.PI / 2];
+        for (const d of dirCands) {
+          const dx = Math.round(Math.cos(d));
+          const dy = Math.round(Math.sin(d));
+          // predict perpendicular branch length: walk in (dx, dy)
+          // from the spawn cell until OOB or filled cell
+          let gx = cell.gx, gy = cell.gy;
+          let predLen = 0;
+          let safety = 0;
+          while (safety++ < cfg.cols + cfg.rows + 2) {
+            gx += dx; gy += dy;
+            if (gx < 0 || gx >= cfg.cols || gy < 0 || gy >= cfg.rows) break;
+            if (snakeFillness(gx, gy) > 0) break;
+            predLen++;
+          }
+          if (predLen < 1) continue; // 0-cell branch = waste
+          // composite tiebreak: PRIMARY lower bisectionCount, then
+          // longer predicted length. strict `<` / `>` keeps earlier
+          // iterated parent / smaller u / first perp side on ties
+          const better = !bestParent ||
+            parent.bisectionCount < bestParent.bisectionCount ||
+            (parent.bisectionCount === bestParent.bisectionCount && predLen > bestPredLen);
+          if (better) {
+            bestParent = parent;
+            bestPredLen = predLen;
+            bestPx = px;
+            bestPy = py;
+            bestDir = d;
+          }
+        }
+      }
+    }
+    if (!bestParent) return; // nothing useful left this step
+    // snap onto the cell-center axis perpendicular to the child's
+    // direction so the new trail rides grid lanes from frame one
+    const cell = snakeCellAt(bestPx, bestPy);
+    let sx = bestPx, sy = bestPy;
+    if (cell) {
+      if (Math.abs(Math.cos(bestDir)) > 0.5) {
+        sy = cfg.originY + (cell.gy + 0.5) * cfg.cellH;
+      } else {
+        sx = cfg.originX + (cell.gx + 0.5) * cfg.cellW;
+      }
+    }
+    spawnSnake(t, sx, sy, bestDir);
+    bestParent.bisectionCount++;
+  }
+
+  // per-frame: walk every LIVE snake straight forward in its fixed
+  // direction, extend its current segment. terminate when the head
+  // crosses out of the inner box OR enters a cell that's already
+  // filled. terminated trails persist for player collision but
+  // stop advancing
   function updateSnakes(t) {
     if (state.activeSnakes.length === 0) return;
     const vh = window.innerHeight / 100;
-    const ib = getInnerBoxPx();
     const ph = getPlayerHitboxPx();
     const pcx = (ph.l + ph.r) / 2;
     const pcy = (ph.t + ph.b) / 2;
     const immune = t < state.immuneUntilT;
-    // first pass -- walk each alive head forward + update current segment.
-    // turns are GRID-ALIGNED: a turn decision happens only when the head
-    // crosses into a new cell, picking the least-filled neighbor (forward
-    // / perpendicular). emergent pattern reads as a hilbert / lawn-mower
-    // fill of the arena
     for (const snake of state.activeSnakes) {
       if (!snake.alive) continue;
+      if (snake.terminated) continue;
       const dt = Math.max(0, Math.min(0.064, (t - snake.lastT) / 1000));
       snake.lastT = t;
       snake.headX += Math.cos(snake.dirRad) * snake.speed * dt;
       snake.headY += Math.sin(snake.dirRad) * snake.speed * dt;
-      // extend current segment to track new head
       const seg = snake.segments[snake.segments.length - 1];
       seg.x2 = snake.headX;
       seg.y2 = snake.headY;
       seg.el.style.width = Math.hypot(seg.x2 - seg.x1, seg.y2 - seg.y1) + 'px';
-      // grid cell crossing -- if the head moved into a new cell, mark
-      // it + decide whether to turn. clamp the head back if the new
-      // cell is out of bounds (forces a turn into the box)
       const cell = snakeCellAt(snake.headX, snake.headY);
       if (cell && (cell.gx !== snake.gx || cell.gy !== snake.gy)) {
         const cfg = state.snakeGridCfg;
         const outOfBox = cell.gx < 0 || cell.gx >= cfg.cols ||
                          cell.gy < 0 || cell.gy >= cfg.rows;
-        if (outOfBox) {
-          // pull the head back into the previous cell so the segment
-          // doesn't render outside the box, then force a turn
-          snake.headX -= Math.cos(snake.dirRad) * snake.speed * dt;
-          snake.headY -= Math.sin(snake.dirRad) * snake.speed * dt;
+        const alreadyFilled = !outOfBox && snakeFillness(cell.gx, cell.gy) > 0;
+        if (outOfBox || alreadyFilled) {
+          // clamp the head FLUSH with what stopped it -- the wall
+          // edge for OOB, or the boundary with the filled cell for
+          // a fill collision. previously we pulled back by one
+          // dt's motion, which left a sliver-sized gap at walls
+          // (the user-visible "top bar remains unfilled" symptom)
+          if (outOfBox) {
+            if (cell.gx < 0)              snake.headX = cfg.originX;
+            else if (cell.gx >= cfg.cols) snake.headX = cfg.originX + cfg.cols * cfg.cellW;
+            if (cell.gy < 0)              snake.headY = cfg.originY;
+            else if (cell.gy >= cfg.rows) snake.headY = cfg.originY + cfg.rows * cfg.cellH;
+          } else {
+            const dirX = Math.round(Math.cos(snake.dirRad));
+            const dirY = Math.round(Math.sin(snake.dirRad));
+            if (dirX > 0)      snake.headX = cfg.originX + cell.gx * cfg.cellW;
+            else if (dirX < 0) snake.headX = cfg.originX + (cell.gx + 1) * cfg.cellW;
+            if (dirY > 0)      snake.headY = cfg.originY + cell.gy * cfg.cellH;
+            else if (dirY < 0) snake.headY = cfg.originY + (cell.gy + 1) * cfg.cellH;
+          }
           seg.x2 = snake.headX;
           seg.y2 = snake.headY;
           seg.el.style.width = Math.hypot(seg.x2 - seg.x1, seg.y2 - seg.y1) + 'px';
-          // try a perpendicular direction -- the chooser will avoid
-          // out-of-bounds via the fillness sentinel. same cell-center
-          // snap as the normal turn path so the edge rows/cols get
-          // full coverage when forced-turning along a wall
-          const tentativeDir = chooseSnakeDirection(snake);
-          if (tentativeDir !== snake.dirRad) {
-            snake.dirRad = tentativeDir;
-            const cfg = state.snakeGridCfg;
-            if (Math.abs(Math.cos(tentativeDir)) > 0.5) {
-              snake.headY = cfg.originY + (snake.gy + 0.5) * cfg.cellH;
-            } else {
-              snake.headX = cfg.originX + (snake.gx + 0.5) * cfg.cellW;
-            }
-            startSnakeSegment(snake, snake.headX, snake.headY);
-          }
+          snake.terminated = true;
         } else {
-          // new cell inside the box -- record entry + mark density
+          // new empty cell -- record entry + mark density
           snake.gx = cell.gx;
           snake.gy = cell.gy;
           snakeIncrement(snake.gx, snake.gy);
-          // decide next direction; if it differs from current, SNAP
-          // the head onto the current cell's center axis perpendicular
-          // to the NEW direction. without the snap, the trail sits on
-          // the cell boundary, leaving the outer half of each row/col
-          // uncovered -- the corner gap the player was hiding in
-          const nextDir = chooseSnakeDirection(snake);
-          if (nextDir !== snake.dirRad) {
-            snake.dirRad = nextDir;
-            const cfg = state.snakeGridCfg;
-            if (Math.abs(Math.cos(nextDir)) > 0.5) {
-              snake.headY = cfg.originY + (snake.gy + 0.5) * cfg.cellH;
-            } else {
-              snake.headX = cfg.originX + (snake.gx + 0.5) * cfg.cellW;
-            }
-            startSnakeSegment(snake, snake.headX, snake.headY);
-          }
         }
       }
     }
-    // (snakes are IMMORTAL by design -- no head-vs-segment kill loop.
-    // they keep walking + filling forever. the avoidance policy in
-    // chooseSnakeDirection naturally steers them toward unfilled cells.
-    // when the grid saturates they walk over already-laid trails,
-    // increasing density but no longer expanding the visible danger)
-    // player-vs-segment damage (every snake is alive, every segment is hot)
+    // player-vs-segment damage. every segment is hot regardless of
+    // whether its snake is still moving or terminated
     if (state.orbDamage && !immune && state.hits > 0) {
       for (const snake of state.activeSnakes) {
         let hit = false;
@@ -3503,19 +3590,22 @@
         }
       }
     }
-    // continuous trickle -- after the initial 4 prongs, one extra
-    // prong spawns from the boss every TRICKLE_MS in a random
-    // cardinal. caps at MAX_COUNT so the late-section additions
-    // close the last unfilled corridors right around the 24s mark
-    // without saturating early
+    // branching gate -- the section opens with the deterministic
+    // 4-seed skeleton; random branches only start firing once all
+    // 4 seeds have terminated. once flipped, the flag stays set
+    // for the rest of the section (so later live branches don't
+    // re-block the cadence)
+    if (!state.phase8InitialsRetired &&
+        state.activeSnakes.length > 0 &&
+        state.activeSnakes.every(s => s.terminated)) {
+      state.phase8InitialsRetired = true;
+    }
     if (state.phase3Mode === 'snake-curve' &&
+        state.phase8InitialsRetired &&
         state.activeSnakes.length < PHASE_7B_SNAKE_MAX_COUNT &&
-        t >= state.nextSnakeTrickleT) {
-      const bc = bossCenterPx();
-      const d = PHASE_7B_SNAKE_PRONG_DIRS[
-        Math.floor(Math.random() * PHASE_7B_SNAKE_PRONG_DIRS.length)];
-      spawnSnake(t, bc.x, bc.y, d);
-      state.nextSnakeTrickleT = t + PHASE_7B_SNAKE_TRICKLE_MS;
+        t >= state.nextSnakeBranchT) {
+      branchOneSnake(t);
+      state.nextSnakeBranchT = t + PHASE_7B_SNAKE_BRANCH_MS;
     }
   }
 
@@ -3538,26 +3628,30 @@
     for (const snake of state.activeSnakes) {
       for (const seg of snake.segments) seg.el.remove();
     }
-    state.activeSnakes.length = 0;
-    state.snakeGrid          = null;
-    state.snakeGridCfg       = null;
-    state.nextSnakeTrickleT  = 0;
+    state.activeSnakes.length   = 0;
+    state.snakeGrid             = null;
+    state.snakeGridCfg          = null;
+    state.nextSnakeBranchT      = 0;
+    state.snakeBranchIdx        = 0;
+    state.phase8InitialsRetired = false;
   }
 
   // spirit-bomb wipe -- pulls every segment + nulls the grid so the
-  // field reads as cleared, then immediately spawns the 4 cardinal
-  // prongs from the boss again. trickle clock resets so the steady
-  // continuous-spawn picks back up on its normal cadence. only does
-  // anything during phase 8's snake-curve section -- a no-op elsewhere
+  // field reads as cleared, then re-seeds the 4 initial snakes.
+  // branching clock + initials-retired flag reset so the section
+  // restarts its deterministic-then-branching arc. only does
+  // anything during phase 8's snake-curve section -- no-op elsewhere
   function wipeSnakesForBomb(t) {
     if (state.activeSnakes.length === 0 && !state.snakeGridCfg) return;
     clearSnakes();
     if (state.phase === 8 && state.phase3Mode === 'snake-curve') {
       const bc = bossCenterPx();
-      for (const d of PHASE_7B_SNAKE_PRONG_DIRS) {
-        spawnSnake(t, bc.x, bc.y, d);
+      const vhPx = window.innerHeight / 100;
+      for (const p of PHASE_7B_SNAKE_INIT_PRONGS) {
+        spawnSnake(t, bc.x + p.oxVh * vhPx, bc.y + p.oyVh * vhPx, p.dir);
       }
-      state.nextSnakeTrickleT = t + PHASE_7B_SNAKE_TRICKLE_MS;
+      state.phase8InitialsRetired = false;
+      state.nextSnakeBranchT = t + PHASE_7B_SNAKE_BRANCH_MS;
     }
   }
 
@@ -3943,9 +4037,9 @@
     // iron-maiden idiom + the vampire-fiction term for being claimed.
     // gameplay-side, that lore is expressed as a death round-dance of
     // wheeling spike-cages escalating in from the arena walls);
-    // untergang = DEATHTHROES (the downfall, snake-curves multiplying
+    // untergang = SHADOWS IN SHADOWS (the downfall, snake-curves multiplying
     // like a hilbert curve until the arena ends)
-    8: { caption: "TODESREIGEN -- SHADE'S EMBRACE<br>UNTERGANG -- DEATHTHROES", sub: 'phase 7b', durationMs: 2400 }
+    8: { caption: "TODESREIGEN -- SHADE'S EMBRACE<br>UNTERGANG -- SHADOWS IN SHADOWS", sub: 'phase 7b', durationMs: 2400 }
   };
   // opts.durationMs -- override the transition duration for this entry
   // (eg the drawn-out boss-defeat transition). when omitted, falls back
@@ -4583,6 +4677,11 @@
     if (state.hits <= 0) return;
     setHits(state.hits - 1);
     state.immuneUntilT = t + IMMUNE_MS;
+    // refill light elemental on every life loss (touhou-style respawn).
+    // used to only refill on full resetFight, so a hit mid-fight left
+    // you with whatever bombs you had -- which felt punishing without
+    // any of the bomb-economy payoff. now each life starts fresh
+    setBombs(3);
     // respawn to initial spawn area
     state.playerX = 0;
     state.playerY = 0;
@@ -4723,6 +4822,12 @@
     const bounceCount = (opts && opts.bounceCount) || 0;
     const cycleEndT   = (opts && opts.cycleEndT)   || 0;
     const big         = !!(opts && opts.big);
+    // per-orb decel envelope -- if set, updateEnemyBullets damps speed
+    // toward minSpeedPx on a decelHalfLifeMs half-life. used by phase 1
+    // wedge so the tracking spread becomes dodgeable by the time it
+    // reaches the bottom of the arena
+    const decelHalfLifeMs = (opts && opts.decelHalfLifeMs) || 0;
+    const minSpeedPx      = (opts && opts.minSpeedPx)      || 0;
     const el = document.createElement('div');
     el.className = 'shadow-orb' +
       (isBeam ? ' shadow-orb--beam' : '') +
@@ -4740,7 +4845,7 @@
     const vhPx = window.innerHeight / 100;
     const hitR = big ? 1.2 * vhPx : 0;
     orbsEl.appendChild(el);
-    state.enemyBullets.push({ el, x, y, vx, vy, isBeam, bounceCount, cycleEndT, hitR });
+    state.enemyBullets.push({ el, x, y, vx, vy, isBeam, bounceCount, cycleEndT, hitR, decelHalfLifeMs, minSpeedPx });
   }
 
   // beam first-bounce -- spawn 2 inward-angled split orbs at +-45 deg
@@ -4772,6 +4877,19 @@
     const immune = t < state.immuneUntilT;
     for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
       const b = state.enemyBullets[i];
+      // per-orb decel envelope -- damp speed toward minSpeedPx on a
+      // half-life. direction unchanged. applied before the position
+      // step so the current frame uses the new speed
+      if (b.decelHalfLifeMs > 0) {
+        const sp = Math.hypot(b.vx, b.vy);
+        if (sp > b.minSpeedPx) {
+          const factor = Math.pow(0.5, (dt * 1000) / b.decelHalfLifeMs);
+          const target = Math.max(sp * factor, b.minSpeedPx);
+          const k = target / sp;
+          b.vx *= k;
+          b.vy *= k;
+        }
+      }
       b.x += b.vx * dt;
       b.y += b.vy * dt;
       // cycle-end cull -- spray orbs from the phase-2 radial pattern
@@ -5010,9 +5128,14 @@
     const base = Math.atan2(py - c.y, px - c.x);
     const spread = WEDGE_SPREAD_DEG * Math.PI / 180;
     const step = spread / (WEDGE_COUNT - 1);
+    // phase 1 default path gets the decel envelope; phase 3 interlude
+    // passes its own intervalMs + keeps constant-velocity orbs
+    const decelOpts = (intervalMs == null)
+      ? { decelHalfLifeMs: WEDGE_DECEL_HALF_LIFE_MS, minSpeedPx: WEDGE_MIN_SPEED_VH * vh }
+      : undefined;
     for (let i = 0; i < WEDGE_COUNT; i++) {
       const a = base - spread / 2 + i * step;
-      spawnShadowOrb(c.x, c.y, Math.cos(a) * speed, Math.sin(a) * speed);
+      spawnShadowOrb(c.x, c.y, Math.cos(a) * speed, Math.sin(a) * speed, decelOpts);
     }
   }
 
@@ -6449,18 +6572,21 @@
       state.lastMaidenExitSide = null;
       state.patternName = 'iron-maiden';
     } else if (sec.kind === 'snake-curve') {
-      // phase 7b ultimate 2 -- snake-curve trails. seed FOUR prongs
-      // from the BOSS SPRITE in cardinal directions, then trickle
-      // additional prongs over the section so the count grows. the
-      // initial 4 don't saturate the grid alone within 24s, but the
-      // trickle pushes the last unfilled corridors closed right as
-      // the timer expires
+      // phase 7b ultimate 2 -- shadows in shadows. seed 4 snakes per
+      // PHASE_7B_SNAKE_INIT_PRONGS: 1 LEFT + 1 RIGHT from boss
+      // center, 2 DOWN spawned a row below boss with horizontal
+      // offsets (so they don't collide with the LEFT/RIGHT pair).
+      // each snake goes straight until wall or fill -- the section
+      // opens with this deterministic skeleton, then random branches
+      // start firing once all 4 seeds retire
       const bc = bossCenterPx();
+      const vhPx = window.innerHeight / 100;
       clearSnakes();
-      for (const d of PHASE_7B_SNAKE_PRONG_DIRS) {
-        spawnSnake(t, bc.x, bc.y, d);
+      for (const p of PHASE_7B_SNAKE_INIT_PRONGS) {
+        spawnSnake(t, bc.x + p.oxVh * vhPx, bc.y + p.oyVh * vhPx, p.dir);
       }
-      state.nextSnakeTrickleT = t + PHASE_7B_SNAKE_TRICKLE_MS;
+      state.phase8InitialsRetired = false;
+      state.nextSnakeBranchT = t + PHASE_7B_SNAKE_BRANCH_MS;
       state.patternName = 'snake-curve';
     } else if (sec.kind === 'climax') {
       // phase 6 closer -- everything layered. split-crosses open at
@@ -6807,7 +6933,7 @@
       }
     }
     else if (state.phase === 8) {
-      // phase 7b TODESREIGEN + UNTERGANG -- SHADE'S EMBRACE + DEATHTHROES.
+      // phase 7b TODESREIGEN + UNTERGANG -- SHADE'S EMBRACE + SHADOWS IN SHADOWS.
       // each section runs its own mechanic. boss + hud stay visible
       // across both so damage dealt during iron-maiden carries into
       // deaththroes
