@@ -11,11 +11,19 @@
 // imperative handle exposed to the admin panel. all methods write into
 // the same setPhase / setOutput / state.orbDamage paths the dev keys
 // use, so the panel + the keyboard shortcuts stay in sync
+export type Hole2Quality = 'auto' | 'low' | 'med' | 'high';
+export type Hole2Tier    = 'low' | 'med' | 'high';
+
 export type Hole2EngineHandle = {
   setPhase:        (n: number) => void;
   setOutput:       (n: number) => void;
   setOrbDamage:    (on: boolean) => void;
-  getState:        () => { phase: number; output: number; orbDamage: boolean };
+  // perf tier control. quality is the persisted preference ('auto'
+  // resolves to a concrete tier in React); calling this routes through
+  // onPerfChange so React updates data-perf + localStorage. there are NO
+  // gameplay-affecting tier knobs -- every tier difference is visual CSS
+  setPerf:         (quality: Hole2Quality) => void;
+  getState:        () => { phase: number; output: number; orbDamage: boolean; quality: Hole2Quality; tier: Hole2Tier };
 };
 
 export type Hole2EngineOpts = {
@@ -49,6 +57,12 @@ export type Hole2EngineOpts = {
   // into no-ops, so only the desync-worthy cases actually move the
   // playhead
   onPhaseChange?: (newPhase: number, canonicalSongSec: number) => void;
+  // fired when the perf tier should change. quality is the preference
+  // ('auto' | 'low' | 'med' | 'high'); forcedTier is set only by the
+  // Phase-3 runtime auto-downgrade, which drops to a specific lower tier
+  // while keeping quality 'auto' (so localStorage stays 'auto'). React
+  // owns resolution + the data-perf attribute + persistence
+  onPerfChange?: (quality: Hole2Quality, forcedTier?: Hole2Tier) => void;
 };
 
 export function startHole2Engine(opts: Hole2EngineOpts): () => void {
@@ -3953,12 +3967,32 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
     setPhase:     (n) => { try { setPhase(n, { forceTitleCard: true }); } catch (_) {} },
     setOutput:    (n) => { try { setOutput(n); } catch (_) {} },
     setOrbDamage: (on) => { state.orbDamage = !!on; },
+    // perf is React-owned: just relay the pick. React resolves the tier,
+    // writes data-perf + localStorage. getState reads those back live so
+    // the panel highlight + the Phase-3 sampler see the truth without the
+    // engine duplicating tier state
+    setPerf:      (q) => { try { opts.onPerfChange?.(q); } catch (_) {} },
     getState:     () => ({
       phase:     state.phase,
       output:    state.output,
-      orbDamage: !!state.orbDamage
+      orbDamage: !!state.orbDamage,
+      quality:   _readQuality(),
+      tier:      _readTier()
     })
   };
+  // read the persisted preference + the live resolved tier (data-perf on
+  // the stage, set by React). defaults keep a pre-React-mount read safe
+  function _readQuality(): Hole2Quality {
+    try {
+      const q = localStorage.getItem('hole2-quality');
+      if (q === 'low' || q === 'med' || q === 'high' || q === 'auto') return q;
+    } catch (_) {}
+    return 'auto';
+  }
+  function _readTier(): Hole2Tier {
+    const t = document.querySelector('.hole2-stage')?.getAttribute('data-perf');
+    return (t === 'low' || t === 'med' || t === 'high') ? t : 'high';
+  }
   function _isDev() { return !!state.devUnlocked; }
   function _showDevToast(msg) {
     try {

@@ -5112,3 +5112,36 @@ html.hole-exit-white-in::before {
    children from existing on remount. with that fixed, the spawn-grow
    animations land normally and the children scale in from the center.
    no !important visibility override needed anymore */
+
+/* ===================================================================
+   hole2 perf tiers -- data-perf is set on .hole2-stage by React
+   (Hole2Page). HIGH has no gates (current visuals). MED/LOW strip GPU-
+   expensive effects only; they never touch gameplay (bullet count,
+   distribution, trajectories, collision are tier-independent). SACRED
+   and untouched at every tier: the ground blur halo (kept, just tighter
+   at MED/LOW) and the 3 boss-trail ghosts (kept, just flat at LOW).
+   These descendant selectors out-specify the base rules (which sit one
+   level deep, either top-level cinematic or nested under .hole2-game),
+   so the filter/display overrides win. =================================== */
+
+/* MED -- drop the wider outer ground-blur pass; tighten the inner halo
+   blur from 22px to 14px. everything else stays at HIGH */
+.hole2-stage[data-perf="med"] .hole2-arena__ground-blur--outer { display: none; }
+.hole2-stage[data-perf="med"] .hole2-arena__ground-blur:not(.hole2-arena__ground-blur--outer) {
+  filter: blur(14px);
+}
+
+/* LOW -- keep the halo (sacred) but at 10px and no outer pass; strip the
+   vignette + every persistent drop-shadow/blur glow. the 3 ghosts stay
+   present (count is sacred) but render flat (no per-ghost blur/glow,
+   normal blend) */
+.hole2-stage[data-perf="low"] .hole2-arena__ground-blur--outer { display: none; }
+.hole2-stage[data-perf="low"] .hole2-arena__ground-blur:not(.hole2-arena__ground-blur--outer) {
+  filter: blur(10px);
+}
+.hole2-stage[data-perf="low"] .hole2-arena__ground-darken { display: none; }
+.hole2-stage[data-perf="low"] .boss__afterimage { filter: none; mix-blend-mode: normal; }
+.hole2-stage[data-perf="low"] .player__sprite { filter: none; }
+.hole2-stage[data-perf="low"] .hole2-arena__box { filter: none; }
+.hole2-stage[data-perf="low"] .boss { filter: none; }
+.hole2-stage[data-perf="low"] .boss[data-hit="true"] { filter: none; }

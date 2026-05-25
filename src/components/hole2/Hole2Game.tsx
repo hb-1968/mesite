@@ -5,7 +5,7 @@
 // the .hole2-game wrapper so they don't bleed into the rest of the
 // site. unmount cleanly stops the rAF + tears down listeners + audio
 import { useEffect, useRef } from 'react';
-import { startHole2Engine, type Hole2EngineHandle } from './engine';
+import { startHole2Engine, type Hole2EngineHandle, type Hole2Quality, type Hole2Tier } from './engine';
 
 // sprite.png IS the boss (the vampire-cloak figure). same file the
 // rising-from-eclipse transition uses, so the figure that landed in the
@@ -42,9 +42,13 @@ type Hole2GameProps = {
   // on the boss track so an early-drained boss bar or admin/dev
   // scrub doesn't drift the music out of sync with the fight
   onPhaseChange?: (newPhase: number, canonicalSongSec: number) => void;
+  // fired when the perf tier should change -- engine relays admin
+  // setPerf picks and the Phase-3 auto-downgrade. page-level updates
+  // data-perf + localStorage in response
+  onPerfChange?: (quality: Hole2Quality, forcedTier?: Hole2Tier) => void;
 };
 
-export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange }: Hole2GameProps) {
+export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange, onPerfChange }: Hole2GameProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -52,11 +56,11 @@ export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightRese
     // ids are unique on the page (this component only mounts once at a
     // time). returned cleanup cancels the loop + wipes listeners + nukes
     // appended dom nodes so a re-mount starts fresh
-    const stop = startHole2Engine({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange });
+    const stop = startHole2Engine({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange, onPerfChange });
     return () => {
       try { stop(); } catch (_) { /* ignore */ }
     };
-  }, [onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange]);
+  }, [onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange, onPerfChange]);
 
   return (
     <div ref={rootRef} className="hole2-game">

@@ -18,7 +18,7 @@ import { WinScreen } from './hole2/WinScreen';
 import { LoseScreen } from './hole2/LoseScreen';
 import { PauseOverlay } from './hole2/PauseOverlay';
 import { AdminPanel } from './hole2/AdminPanel';
-import type { Hole2EngineHandle } from './hole2/engine';
+import type { Hole2EngineHandle, Hole2Quality, Hole2Tier } from './hole2/engine';
 
 const BOX_W = 320;
 const BOX_H = 110;
@@ -526,6 +526,33 @@ const ECLIPSE_OVERLAP_MS = 300; // eclipse begins this much before rise ends
 // fade in / appear once this fires
 const ARENA_READY_MS = 5000;
 
+// ---- perf tier resolution -------------------------------------------
+// quality is the user preference; resolveTier turns it into a concrete
+// rendering tier that drives data-perf on the stage (which gates the
+// visual-only CSS perf rules). 'auto' defers to detectTier -- a static
+// device heuristic, fleshed out in Phase 3; for now reduced-motion
+// users get low, everyone else high. explicit picks pass straight
+// through. NOTE: tiers only change visuals -- never gameplay
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' &&
+    !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
+function detectTier(): Hole2Tier {
+  if (prefersReducedMotion()) return 'low';
+  return 'high';
+}
+function resolveTier(quality: Hole2Quality): Hole2Tier {
+  if (quality === 'low' || quality === 'med' || quality === 'high') return quality;
+  return detectTier();
+}
+function readQualityPref(): Hole2Quality {
+  try {
+    const q = localStorage.getItem('hole2-quality');
+    if (q === 'low' || q === 'med' || q === 'high' || q === 'auto') return q;
+  } catch { /* localStorage may be disabled -- ignore */ }
+  return 'auto';
+}
+
 // ---- main component -------------------------------------------------
 export function Hole2Page() {
   const [activeIdx, setActiveIdx] = useState<number>(-1);
@@ -554,6 +581,25 @@ export function Hole2Page() {
   // so a second attempt can re-trigger the overlay
   const [defeated, setDefeated] = useState(false);
   const handleDefeat = useCallback(() => setDefeated(true), []);
+
+  // perf tiering. perfQuality is the persisted preference; perfTier is
+  // the resolved concrete tier rendered as data-perf on the stage, which
+  // gates the visual-only CSS perf rules. React is the single source of
+  // truth -- the BEGIN-screen toggle + AdminPanel route changes through
+  // handlePerfChange, and the engine's Phase-3 auto-downgrade fires it
+  // with a forcedTier (drops visuals without overwriting the 'auto' pref)
+  const [perfQuality, setPerfQuality] = useState<Hole2Quality>(() => readQualityPref());
+  const [perfTier, setPerfTier] = useState<Hole2Tier>(() => resolveTier(readQualityPref()));
+  const handlePerfChange = useCallback((quality: Hole2Quality, forcedTier?: Hole2Tier) => {
+    if (forcedTier) {
+      // Phase-3 runtime downgrade -- drop the visual tier, keep the pref
+      setPerfTier(forcedTier);
+      return;
+    }
+    setPerfQuality(quality);
+    setPerfTier(resolveTier(quality));
+    try { localStorage.setItem('hole2-quality', quality); } catch { /* ignore */ }
+  }, []);
 
   // dialogue bg music -- needs the yt iframe api because the playback
   // trigger (first dialogue-advance click) isn't on the iframe itself
@@ -796,6 +842,7 @@ export function Hole2Page() {
       data-phase={phase}
       data-arena-ready={arenaReady ? 'true' : 'false'}
       data-begun={begun ? 'true' : 'false'}
+      data-perf={perfTier}
     >
       {/* hidden yt iframe host for the dialogue track -- positioned
           off-screen via css. the iframe itself can't be zero-sized or
@@ -889,6 +936,7 @@ export function Hole2Page() {
           onFightReset={handleFightReset}
           onDefeat={handleDefeat}
           onPhaseChange={handlePhaseChange}
+          onPerfChange={handlePerfChange}
         />
       )}
 
