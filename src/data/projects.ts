@@ -29,9 +29,9 @@ export const projects: Project[] = [
     details: [
       'Attention-based multiple-instance learning over tile features from UNI and CONCH foundation models.',
       'Confidence-gated routing: when PRAME prediction is confident the slide goes through a conditioned classifier; uncertain cases fall back to standard foundation-model classification.',
-      'Pipeline from GDC data pull through OpenSlide tiling on BU HPC, with attention-heatmap overlays for sanity-checking what the model actually fixates on.'
+      'Pipeline from GDC data pull through OpenSlide tiling on Colab, with attention-heatmap overlays for sanity-checking what the model actually fixates on.'
     ],
-    stack: ['PyTorch', 'UNI', 'CONCH', 'MIL', 'OpenSlide', 'CLAM', 'BU HPC'],
+    stack: ['PyTorch', 'UNI', 'CONCH', 'MIL', 'OpenSlide', 'CLAM', 'Colab'],
     tags: ['research'],
     highlight: { label: 'cases', value: '469' }
   },
