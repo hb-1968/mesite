@@ -1,0 +1,105 @@
+From 3e50d9f2ff0d453b6c2216156c958ea712a37a74 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 25 May 2026 04:54:00 +0000
+Subject: [PATCH 4/4] =?UTF-8?q?perf(hole2):=20Phase=203=20=E2=80=94=20auto?=
+ =?UTF-8?q?-detect=20tier=20(static=20heuristic=20+=20runtime=20downgrade)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Makes 'auto' adaptive in two layers:
+
+- React detectTier: static device heuristic (hardwareConcurrency +
+  Chromium deviceMemory + small-screen check) for the initial 'auto'
+  resolution. Conservative -- only steps down on clear signals.
+- engine runtime sampler: when the preference is 'auto' and not already
+  LOW, samples dt over the first 120 processed gameplay frames. If >20%
+  of frames blow the budget OR the average is sustained sub-~45fps, it
+  drops one visual tier via onPerfChange('auto', next) -- keeping the
+  'auto' preference (no localStorage overwrite). Downgrade-only,
+  one-shot, silent. Reads the preference/tier live so an AdminPanel pick
+  mid-fight halts it. Never touches gameplay.
+---
+ src/components/Hole2Page.tsx   | 13 +++++++++++++
+ src/components/hole2/engine.ts | 34 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 47 insertions(+)
+
+diff --git a/src/components/Hole2Page.tsx b/src/components/Hole2Page.tsx
+index 090f8a1..97d6dbe 100644
+--- a/src/components/Hole2Page.tsx
++++ b/src/components/Hole2Page.tsx
+@@ -539,6 +539,19 @@ function prefersReducedMotion(): boolean {
+ }
+ function detectTier(): Hole2Tier {
+   if (prefersReducedMotion()) return 'low';
++  // static device heuristic for the initial 'auto' resolution. cores is
++  // widely supported; deviceMemory is Chromium-only (undefined elsewhere,
++  // so we don't penalize a device for not reporting it). the engine's
++  // runtime sampler (Phase 3.2) is the safety net when this guesses high
++  // on a device that actually chokes
++  const cores = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
++  const mem = (typeof navigator !== 'undefined')
++    ? (navigator as { deviceMemory?: number }).deviceMemory
++    : undefined;
++  if (cores <= 2) return 'low';
++  if (mem != null && mem <= 2) return 'low';
++  if (cores <= 4 && (mem == null || mem <= 4)) return 'med';
++  if (typeof window !== 'undefined' && window.innerWidth < 900 && cores < 8) return 'med';
+   return 'high';
+ }
+ function resolveTier(quality: Hole2Quality): Hole2Tier {
+diff --git a/src/components/hole2/engine.ts b/src/components/hole2/engine.ts
+index cfaa3ee..b902a86 100644
+--- a/src/components/hole2/engine.ts
++++ b/src/components/hole2/engine.ts
+@@ -6849,6 +6849,13 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+   // just re-arm the rAF without advancing -- _gameNow() keeps the
+   // world frozen via _pauseAccum
+   let lastT = _gameNow();
++  // Phase-3 runtime perf sampler. only active when the quality preference
++  // is 'auto'. one-shot: collects dt over the first PERF_SAMPLE_N
++  // processed (non-paused) gameplay frames, then either drops one visual
++  // tier (downgrade-only) or disarms. never touches gameplay
++  let _perfSamples: number[] = [];
++  let _perfChecked = false;
++  const PERF_SAMPLE_N = 120;
+   let _rafId = 0;
+   function tick(_rafT) {
+     // hard wrap -- any throw inside the body would normally kill the
+@@ -6876,6 +6883,33 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+     const t = _gameNow();
+     const dt = Math.min(64, t - lastT) / 1000;
+     lastT = t;
++    // Phase-3 runtime perf check -- only when the preference is 'auto'
++    // (read live so an AdminPanel pick mid-fight halts it) and we're not
++    // already at LOW. if the frame budget is consistently blown across
++    // the sample window, drop one visual tier. downgrade-only, one-shot;
++    // onPerfChange flips data-perf in React. gameplay is never affected
++    if (!_perfChecked && _readQuality() === 'auto') {
++      const curTier = _readTier();
++      if (curTier === 'low') {
++        _perfChecked = true;  // nothing lower to drop to
++      } else {
++        _perfSamples.push(dt);
++        if (_perfSamples.length >= PERF_SAMPLE_N) {
++          let sum = 0, dropped = 0;
++          for (const d of _perfSamples) { sum += d; if (d > 0.025) dropped++; }
++          const avg = sum / _perfSamples.length;
++          // dual gate: >20% of frames blown OR a sustained sub-~45fps
++          // average. requiring real, persistent strain keeps a single
++          // transient stutter from tripping the downgrade
++          if (dropped > 24 || avg > 0.022) {
++            const next: Hole2Tier = curTier === 'high' ? 'med' : 'low';
++            try { opts.onPerfChange?.('auto', next); } catch (_) {}
++          }
++          _perfChecked = true;
++          _perfSamples = [];
++        }
++      }
++    }
+     const vh = window.innerHeight / 100;
+     // dx/dy declared at function scope so the facing code below can
+     // read them whether or not the spiral hold path ran
+-- 
+2.43.0
+

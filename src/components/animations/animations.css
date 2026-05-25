@@ -40,37 +40,73 @@
 .ax-label  { font-family: var(--font-mono); font-size: 9px; fill: var(--fg-muted); letter-spacing: 0.04em; }
 
 
-/* 1. PRAME / attention */
-.prame-tile {
+/* 1. PRAME / attention
+   real WSI thumbnails with attention overlay (from prame-predict repo),
+   under a tile grid that fades in, then dissolves to reveal the slides */
+
+/* the slide images themselves -- fade in early, hold visible */
+.prame-panel image {
+  --d: 0.05; --span: 0.30;
+  opacity: var(--local);
+}
+.prame-frame {
+  fill: none;
+  stroke: var(--fg-faint);
+  stroke-width: 1;
+  --d: 0.05; --span: 0.20;
+  opacity: var(--local);
+}
+
+/* the tile overlay -- fades in fast, then fades back out to show heatmap */
+.prame-tile-ov {
+  --span: 0.18;
   fill: var(--bg-elev);
-  opacity: var(--local);
+  /* triangle wave: rise on --d..--d+0.18, fall over --d+0.30..0.55 */
+  --rise: clamp(0, calc((var(--progress, 0) - var(--d, 0)) / var(--span, 0.18)), 1);
+  --fall: clamp(0, calc((var(--progress, 0) - 0.45) / 0.20), 1);
+  opacity: calc(var(--rise) * (1 - var(--fall)) * 0.78);
 }
-.prame-tile--att {
-  --d2: 0.55; --span2: 0.25;
-  --local2: clamp(0, calc((var(--progress, 0) - var(--d2)) / var(--span2)), 1);
-  fill: color-mix(in srgb,
-                  var(--terracotta) calc(var(--local2) * 100%),
-                  var(--bg-elev));
-}
-.prame-bloom {
-  --d: 0.5; --span: 0.35;
+.prame-tile-ov--att {
   fill: var(--terracotta);
-  opacity: calc(var(--local) * 0.45);
-  filter: blur(18px);
-  transform-origin: 240px 170px;
-  transform: scale(calc(0.4 + var(--local) * 0.7));
 }
+
+/* attention ring -- soft terracotta accent on the TP nest */
+.prame-bloom {
+  --d: 0.55; --span: 0.30;
+  fill: none;
+  stroke: var(--terracotta);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+  opacity: calc(var(--local) * 0.85);
+  transform-origin: 155px 170px;
+  transform-box: fill-box;
+  transform: scale(calc(0.5 + var(--local) * 0.6));
+}
+
+/* confidence pills -- pos and neg styled distinctly */
 .prame-pill rect {
-  --d: 0.85; --span: 0.15;
-  fill: var(--amber);
+  --d: 0.80; --span: 0.15;
   opacity: var(--local);
 }
+.prame-pill--pos rect { fill: var(--amber); }
+.prame-pill--neg rect { fill: var(--fg-muted); }
 .prame-pill text {
-  --d: 0.88; --span: 0.12;
+  --d: 0.83; --span: 0.12;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 9px;
   fill: var(--bg-deep);
   font-weight: 700;
+  letter-spacing: 0.02em;
+  opacity: var(--local);
+}
+
+/* slide-id footers */
+.prame-sid {
+  --d: 0.88; --span: 0.10;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--fg-dim);
+  letter-spacing: 0.04em;
   opacity: var(--local);
 }
 
@@ -186,6 +222,29 @@
   stroke: var(--fg-dim);
   stroke-width: 1.5;
   opacity: var(--local);
+}
+
+/* divider between AUC bars and the ROC artifact panel */
+.bench-divider {
+  --d: 0.78; --span: 0.10;
+  stroke: var(--fg-faint);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: var(--local);
+}
+
+/* the ROC chart image from results/cv_roc_curves.png. embedded as a
+   paper-figure inset -- the png has transparent white background so the
+   colored curves float over the canvas bg. a slight blend handles the
+   remaining black axis text in dark mode. */
+.bench-roc image {
+  --d: 0.80; --span: 0.18;
+  opacity: var(--local);
+}
+/* dark theme: the chart's residual black axis chrome would disappear into
+   the bg, so screen-blend lifts it just enough to read */
+:root:not([data-theme='light']) .bench-roc image {
+  mix-blend-mode: screen;
 }
 
 

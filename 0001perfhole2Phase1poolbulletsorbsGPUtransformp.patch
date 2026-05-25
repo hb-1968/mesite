@@ -1,0 +1,358 @@
+From dfeaf09442ac1cfb2ec73bcd18fd71168ddd77bf Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 25 May 2026 04:22:02 +0000
+Subject: [PATCH 1/4] =?UTF-8?q?perf(hole2):=20Phase=201=20=E2=80=94=20pool?=
+ =?UTF-8?q?=20bullets/orbs,=20GPU-transform=20positions,=20ring-buffer=20t?=
+ =?UTF-8?q?rail?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Gameplay-neutral rendering optimizations for the bullet-hell engine
+(collision/motion read JS state, never the DOM, so bullet count,
+distribution, trajectories, and hit detection are unchanged):
+
+- Element pools for bullets + orbs: reuse hidden div nodes instead of
+  createElement/appendChild per spawn and .remove() per despawn, killing
+  per-frame allocation/GC churn. Idle pool capped at 120; ACTIVE counts
+  are never capped.
+- Bullets/orbs positioned via --bx/--by / --ox/--oy CSS-var transforms
+  instead of left/top, so per-frame updates are GPU-composited and skip
+  layout reflow. Beam rotation rides --orot.
+- Boss trail converted from per-frame unshift (O(n) memmove + fresh
+  object) to an in-place ring buffer; per-ghost writes skipped when
+  trail strength is 0.
+
+No visual change at any tier; signature visuals (ground blur halo, 3
+trail ghosts) untouched.
+---
+ src/components/hole2/engine.ts | 130 +++++++++++++++++++++++----------
+ src/styles/global.css          |  20 ++++-
+ 2 files changed, 111 insertions(+), 39 deletions(-)
+
+diff --git a/src/components/hole2/engine.ts b/src/components/hole2/engine.ts
+index 4601b78..5fdbe93 100644
+--- a/src/components/hole2/engine.ts
++++ b/src/components/hole2/engine.ts
+@@ -74,6 +74,17 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+ 
+   function _audio(url: string): HTMLAudioElement { const a = new Audio(url); _audioPool.push(a); return a; }
+ 
++  // element pools -- reuse div nodes for bullets + orbs instead of
++  // createElement/appendChild per spawn and .remove() per despawn. on
++  // despawn the node is hidden (--pooled class) + parked in its pool;
++  // on the next spawn it's pulled, re-classed, repositioned. pools are
++  // closure-locals so they die with the engine on stop(). cap bounds the
++  // idle DOM; ACTIVE counts are never capped (bullet field is sacred --
++  // pooling is purely an allocation/GC win, never a culler)
++  const _bulletPool: HTMLDivElement[] = [];
++  const _orbPool:    HTMLDivElement[] = [];
++  const POOL_CAP = 120;
++
+   // ---- pause / resume infra ----
+   // every game-time reference (phase timers, fire intervals, immunity
+   // windows, entity spawn ts) flows through _gameNow(). while paused we
+@@ -297,6 +308,9 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+     bossTrail: [],        // ring of past {x,y,dir} poses. trail samples
+                           //   from fixed lag indices each frame. capped
+                           //   at TRAIL_HISTORY_MAX so memory stays flat
++    bossTrailHead: 0,     // ring write cursor; newest pose lives here.
++                          //   moves backward each frame, slots mutated in
++                          //   place so steady-state alloc stays at zero
+     bossSpeedSmooth: 0,   // ema of |dx|+|dy|. drives --trail-strength so
+                           //   the ghosts wake/sleep on motion, not on a
+                           //   raw per-frame delta (which would strobe)
+@@ -3514,7 +3528,7 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+     // wipe stale orbs + beams + +s + towers + teeth so the new phase
+     // starts clean. also reset phase 3 sub-mode + one-shot flags so
+     // jumping back to phase 3 via ] replays the full 3a -> 3b sequence
+-    for (const o of state.enemyBullets) o.el.remove();
++    for (const o of state.enemyBullets) _recycleOrb(o.el);
+     state.enemyBullets.length = 0;
+     clearBeams();
+     clearPlusProjectiles();
+@@ -3875,7 +3889,7 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+     // the rest are owned by their helpers. snakes (phase 7b
+     // deaththroes) are deliberately NOT wiped -- they're immortal
+     // and the bomb cannot clear them
+-    for (const o of state.enemyBullets) o.el.remove();
++    for (const o of state.enemyBullets) _recycleOrb(o.el);
+     state.enemyBullets.length = 0;
+     clearBeams();
+     clearPlusProjectiles();
+@@ -4106,12 +4120,23 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+   // patterns funnel through this. turnRate is the homing curve cap
+   // in rad/sec; big bullets get a much lower rate so they still drift
+   // wide. spawnedAt powers the max-lifetime prune
++  // park a spent bullet node in the pool (hidden) for reuse, or drop it
++  // if the pool is already full. the --pooled class sets display:none;
++  // it's cleared on reuse when className is overwritten
++  function _recycleBullet(el) {
++    if (_bulletPool.length >= POOL_CAP) { el.remove(); return; }
++    el.className = 'bullet bullet--pooled';
++    _bulletPool.push(el);
++  }
+   function spawnBulletAt(x, y, vx, vy, dmg, big) {
+-    const el = document.createElement('div');
++    let el = _bulletPool.pop();
++    if (!el) {
++      el = document.createElement('div');
++      bulletsEl.appendChild(el);
++    }
+     el.className = big ? 'bullet bullet--big' : 'bullet';
+-    el.style.left = x + 'px';
+-    el.style.top  = y + 'px';
+-    bulletsEl.appendChild(el);
++    el.style.setProperty('--bx', x + 'px');
++    el.style.setProperty('--by', y + 'px');
+     const turnRate = big ? BIG_TURN_RATE_RAD : BULLET_TURN_RATE_RAD;
+     state.bullets.push({
+       el, x, y, vx, vy, dmg, turnRate,
+@@ -4254,7 +4279,7 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+       if (b.x >= bossLeftPx && b.x <= bossRightPx &&
+           b.y >= bossTopPx  && b.y <= bossBotPx) {
+         if (state.boss > 0) setBoss(state.boss - b.dmg * dmgMult);
+-        b.el.remove();
++        _recycleBullet(b.el);
+         state.bullets.splice(i, 1);
+         hitThisTick = true;
+         continue;
+@@ -4266,12 +4291,12 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+       if (b.y < exitTopPx ||
+           b.x < -10 || b.x > window.innerWidth + 10 ||
+           nowMs - b.spawnedAt > MAX_BULLET_LIFE_MS) {
+-        b.el.remove();
++        _recycleBullet(b.el);
+         state.bullets.splice(i, 1);
+         continue;
+       }
+-      b.el.style.left = b.x + 'px';
+-      b.el.style.top  = b.y + 'px';
++      b.el.style.setProperty('--bx', b.x + 'px');
++      b.el.style.setProperty('--by', b.y + 'px');
+     }
+     if (hitThisTick) {
+       bossEl.setAttribute('data-hit', 'true');
+@@ -4345,7 +4370,7 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+     state.lastFacing = 'idle';
+     playerEl.setAttribute('data-facing', 'idle');
+     state.immuneUntilT = 0;
+-    for (const b of state.bullets) b.el.remove();
++    for (const b of state.bullets) _recycleBullet(b.el);
+     state.bullets.length = 0;
+     state.startedAt = _gameNow();
+     // clear the end-state latches so a fresh fight can re-fire either
+@@ -4460,6 +4485,16 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+   // and decays linearly to v over decayMs (touhou bloom). per-orb boost
+   // + decay defaults to BULLET_INIT_BOOST + BULLET_DECAY_MS, override via
+   // opts when a pattern wants a different launch feel
++  // park a spent orb node in the pool (hidden) for reuse, or drop it if
++  // the pool is full. --pooled sets display:none; cleared on reuse. the
++  // stale --ox/--oy/--orot vars are harmless until the next spawn
++  // overwrites --ox/--oy (and --orot only matters for the beam variant,
++  // whose class re-adds the rotate term)
++  function _recycleOrb(el) {
++    if (_orbPool.length >= POOL_CAP) { el.remove(); return; }
++    el.className = 'shadow-orb shadow-orb--pooled';
++    _orbPool.push(el);
++  }
+   function spawnShadowOrb(x, y, vx, vy, opts) {
+     // universal fire cue -- rate-limited so a pair/fan/spray collapses
+     // to one play. spaced solo orbs still each get their cue
+@@ -4470,23 +4505,28 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+     const big         = !!(opts && opts.big);
+     const boost       = (opts && opts.boost   != null) ? opts.boost   : BULLET_INIT_BOOST;
+     const decayMs     = (opts && opts.decayMs != null) ? opts.decayMs : BULLET_DECAY_MS;
+-    const el = document.createElement('div');
++    let el = _orbPool.pop();
++    if (!el) {
++      el = document.createElement('div');
++      orbsEl.appendChild(el);
++    }
+     el.className = 'shadow-orb' +
+       (isBeam ? ' shadow-orb--beam' : '') +
+       (big    ? ' shadow-orb--big'  : '');
+-    el.style.left = x + 'px';
+-    el.style.top  = y + 'px';
+-    // beams render as elongated rectangles oriented along velocity
++    el.style.setProperty('--ox', x + 'px');
++    el.style.setProperty('--oy', y + 'px');
++    // beams render as elongated rectangles oriented along velocity. the
++    // rotation rides --orot (the .shadow-orb--beam transform composes it
++    // with the --ox/--oy translate); written once at spawn
+     if (isBeam) {
+       const ang = Math.atan2(vy, vx);
+-      el.style.transform = 'translate(-50%, -50%) rotate(' + (ang + Math.PI / 2) + 'rad)';
++      el.style.setProperty('--orot', (ang + Math.PI / 2) + 'rad');
+     }
+     // hitR -- per-orb collision radius in px. default orbs stay point-
+     // tested (0); big variant gets ~1.2vh so the hitbox roughly matches
+     // the .shadow-orb--big visual (2.4vh diameter)
+     const vhPx = window.innerHeight / 100;
+     const hitR = big ? 1.2 * vhPx : 0;
+-    orbsEl.appendChild(el);
+     // vx/vy on the orb are the EFFECTIVE current velocity (target * factor);
+     // updateEnemyBullets rewrites them each tick from vxT/vyT. splitBeamInward
+     // + other consumers can still read b.vx/b.vy without caring about decay
+@@ -4544,7 +4584,7 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+       // disappear together with their parent beams, regardless of
+       // whether they've cleared the box yet
+       if (b.cycleEndT > 0 && t >= b.cycleEndT) {
+-        b.el.remove();
++        _recycleOrb(b.el);
+         state.enemyBullets.splice(i, 1);
+         continue;
+       }
+@@ -4554,7 +4594,7 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+       const outside = b.x < ib.l || b.x > ib.r || b.y < ib.t || b.y > ib.b;
+       if (outside) {
+         if (b.isBeam && b.bounceCount === 0) splitBeamInward(b);
+-        b.el.remove();
++        _recycleOrb(b.el);
+         state.enemyBullets.splice(i, 1);
+         continue;
+       }
+@@ -4569,12 +4609,12 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+           b.x + r >= p.l && b.x - r <= p.r &&
+           b.y + r >= p.t && b.y - r <= p.b) {
+         takeDamage(t);
+-        b.el.remove();
++        _recycleOrb(b.el);
+         state.enemyBullets.splice(i, 1);
+         continue;
+       }
+-      b.el.style.left = b.x + 'px';
+-      b.el.style.top  = b.y + 'px';
++      b.el.style.setProperty('--ox', b.x + 'px');
++      b.el.style.setProperty('--oy', b.y + 'px');
+     }
+   }
+ 
+@@ -4621,9 +4661,15 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+                                         //   close to full alpha after the ema mix
+   function updateBossTrail() {
+     const buf = state.bossTrail;
+-    // push newest pose at the front; trim tail
+-    buf.unshift({ x: state.bossX, y: state.bossY, dir: state.bossDir });
+-    if (buf.length > TRAIL_HISTORY_MAX) buf.length = TRAIL_HISTORY_MAX;
++    // ring write -- move the head back one slot and mutate it in place to
++    // the current pose. replaces buf.unshift (O(n) memmove + a fresh
++    // object every frame); slots are pre-created by resetBossTrail so
++    // steady-state allocation is zero
++    state.bossTrailHead = (state.bossTrailHead - 1 + TRAIL_HISTORY_MAX) % TRAIL_HISTORY_MAX;
++    const head = state.bossTrailHead;
++    let slot = buf[head];
++    if (!slot) { slot = { x: 0, y: 0, dir: 1 }; buf[head] = slot; }
++    slot.x = state.bossX; slot.y = state.bossY; slot.dir = state.bossDir;
+     // raw speed -- |dx|+|dy| from the previous frame. cheap, no sqrt
+     const dx = state.bossX - state.lastBossX;
+     const dy = state.bossY - state.lastBossY;
+@@ -4643,16 +4689,20 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+                 (TRAIL_SPEED_CEIL - TRAIL_SPEED_FLOOR);
+       strength = s < 0 ? 0 : (s > 1 ? 1 : s);
+     }
+-    // write each ghost's pose from its lag index
+-    for (let i = 0; i < trailGhostEls.length; i++) {
+-      const lag = TRAIL_LAG_FRAMES[i] != null ? TRAIL_LAG_FRAMES[i] : 0;
+-      const idx = Math.min(lag, buf.length - 1);
+-      const sample = buf[idx];
+-      if (!sample) continue;
+-      const el = trailGhostEls[i];
+-      el.style.setProperty('--ax', sample.x.toFixed(2) + 'px');
+-      el.style.setProperty('--ay', sample.y.toFixed(2) + 'px');
+-      el.style.setProperty('--ad', String(sample.dir));
++    // write each ghost's pose from its lag index -- skipped entirely when
++    // strength is 0 (portaling/hidden, or held still). ghosts are already
++    // invisible at strength 0 (opacity = lag-alpha * trail-strength), and
++    // the ring above keeps advancing, so history stays continuous
++    if (strength > 0) {
++      for (let i = 0; i < trailGhostEls.length; i++) {
++        const lag = TRAIL_LAG_FRAMES[i] != null ? TRAIL_LAG_FRAMES[i] : 0;
++        const sample = buf[(head + lag) % TRAIL_HISTORY_MAX];
++        if (!sample) continue;
++        const el = trailGhostEls[i];
++        el.style.setProperty('--ax', sample.x.toFixed(2) + 'px');
++        el.style.setProperty('--ay', sample.y.toFixed(2) + 'px');
++        el.style.setProperty('--ad', String(sample.dir));
++      }
+     }
+     if (trailEl) trailEl.style.setProperty('--trail-strength', strength.toFixed(3));
+   }
+@@ -4662,10 +4712,16 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+   // teleport position and draw a long line across the arena
+   function resetBossTrail() {
+     const buf = state.bossTrail;
+-    buf.length = 0;
++    // fill all slots with the current pose so the lag samples don't draw
++    // a line across a teleport. reuse existing slot objects when present
++    // (no alloc on portal resets); create them on first init
+     for (let i = 0; i < TRAIL_HISTORY_MAX; i++) {
+-      buf.push({ x: state.bossX, y: state.bossY, dir: state.bossDir });
++      const s = buf[i];
++      if (s) { s.x = state.bossX; s.y = state.bossY; s.dir = state.bossDir; }
++      else buf[i] = { x: state.bossX, y: state.bossY, dir: state.bossDir };
+     }
++    buf.length = TRAIL_HISTORY_MAX;
++    state.bossTrailHead = 0;
+     state.bossSpeedSmooth = 0;
+     state.lastBossY = state.bossY;
+   }
+diff --git a/src/styles/global.css b/src/styles/global.css
+index 816ab64..ee01d4a 100644
+--- a/src/styles/global.css
++++ b/src/styles/global.css
+@@ -3038,12 +3038,19 @@ html.hole-exit-white-in::before {
+     width: 0.7vh;
+     height: 0.7vh;
+     background: var(--hud-fg);
+-    transform: translate(-50%, -50%);
++    /* position rides --bx/--by (written each frame by the engine) so the
++       per-frame update is a GPU-composited transform, not a layout-
++       triggering left/top write. the -50% keeps it centered on its point */
++    transform: translate(var(--bx, 0px), var(--by, 0px)) translate(-50%, -50%);
++    will-change: transform;
+     box-shadow:
+       0 0 0 1px rgba(0, 0, 0, 0.5),
+       0 0 4px rgba(255, 230, 180, 0.6);
+     image-rendering: pixelated;
+   }
++  /* pooled (despawned) bullet -- parked hidden for reuse by the engine's
++     _bulletPool. cleared when the node is re-classed on the next spawn */
++  .bullet--pooled { display: none; }
+ 
+   /* globe -- collectible power item. drops from the boss when its
+      health crosses below 15% (one per phase). drifts downward through
+@@ -3190,13 +3197,18 @@ html.hole-exit-white-in::before {
+     background: #050509;
+     border: 1px solid #16161e;
+     border-radius: 50%;
+-    transform: translate(-50%, -50%);
++    /* position rides --ox/--oy (written each frame by the engine) -- GPU-
++       composited transform instead of a layout-triggering left/top write */
++    transform: translate(var(--ox, 0px), var(--oy, 0px)) translate(-50%, -50%);
++    will-change: transform;
+     pointer-events: none;
+     z-index: 4;
+     box-shadow:
+       0 0 6px rgba(0, 0, 0, 0.65),
+       inset 0 0 3px rgba(255, 255, 255, 0.06);
+   }
++  /* pooled (despawned) orb -- parked hidden for reuse by _orbPool */
++  .shadow-orb--pooled { display: none; }
+   /* beam variant -- elongated rectangle aligned with velocity. used by
+      phase 2 cross beams. inline transform from js handles rotation
+      (translate -50% -50% + rotate) since the angle is per-orb */
+@@ -3205,6 +3217,10 @@ html.hole-exit-white-in::before {
+     height: 2.8vh;
+     border-radius: 0.45vh / 1.4vh;
+     background: #060610;
++    /* composes the per-frame --ox/--oy translate with the per-orb --orot
++       rotation (written once at spawn). overrides the base .shadow-orb
++       transform by source order (later rule, equal specificity) */
++    transform: translate(var(--ox, 0px), var(--oy, 0px)) translate(-50%, -50%) rotate(var(--orot, 0rad));
+     box-shadow:
+       0 0 8px rgba(0, 0, 0, 0.75),
+       inset 0 0 4px rgba(255, 255, 255, 0.08);
+-- 
+2.43.0
+

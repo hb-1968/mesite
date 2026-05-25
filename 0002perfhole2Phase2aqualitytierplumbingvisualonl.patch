@@ -1,0 +1,279 @@
+From fbd8340272f94b9b96f08634c811d3700e86afc8 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 25 May 2026 04:26:51 +0000
+Subject: [PATCH 2/4] =?UTF-8?q?perf(hole2):=20Phase=202a=20=E2=80=94=20qua?=
+ =?UTF-8?q?lity-tier=20plumbing=20+=20visual-only=20data-perf=20gates?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Adds the tier system with defaults that preserve current visuals (auto
+-> high). React (Hole2Page) is the single source of truth: holds the
+quality preference + resolved tier, renders data-perf on .hole2-stage,
+and owns resolveTier/detectTier (reduced-motion -> low for now; Phase 3
+adds the device heuristic).
+
+- engine: Hole2Quality/Hole2Tier types, setPerf on the handle (relays to
+  onPerfChange; no gameplay knobs), getState reports live quality+tier.
+- onPerfChange opt threads through Hole2Game; forcedTier reserved for the
+  Phase-3 auto-downgrade (drops visuals without overwriting the pref).
+- CSS data-perf gates: MED drops the outer ground-blur pass + tightens
+  the inner halo to 14px; LOW keeps the halo (10px, sacred) + the 3
+  ghosts (flat) but strips the vignette and the box/boss/player glows.
+
+No UI to change tiers yet (that's Phase 2b); default high = no visual
+change. Gameplay is tier-independent.
+---
+ src/components/Hole2Page.tsx       | 50 +++++++++++++++++++++++++++++-
+ src/components/hole2/Hole2Game.tsx | 12 ++++---
+ src/components/hole2/engine.ts     | 38 +++++++++++++++++++++--
+ src/styles/global.css              | 33 ++++++++++++++++++++
+ 4 files changed, 126 insertions(+), 7 deletions(-)
+
+diff --git a/src/components/Hole2Page.tsx b/src/components/Hole2Page.tsx
+index 797ccc8..468825d 100644
+--- a/src/components/Hole2Page.tsx
++++ b/src/components/Hole2Page.tsx
+@@ -18,7 +18,7 @@ import { WinScreen } from './hole2/WinScreen';
+ import { LoseScreen } from './hole2/LoseScreen';
+ import { PauseOverlay } from './hole2/PauseOverlay';
+ import { AdminPanel } from './hole2/AdminPanel';
+-import type { Hole2EngineHandle } from './hole2/engine';
++import type { Hole2EngineHandle, Hole2Quality, Hole2Tier } from './hole2/engine';
+ 
+ const BOX_W = 320;
+ const BOX_H = 110;
+@@ -526,6 +526,33 @@ const ECLIPSE_OVERLAP_MS = 300; // eclipse begins this much before rise ends
+ // fade in / appear once this fires
+ const ARENA_READY_MS = 5000;
+ 
++// ---- perf tier resolution -------------------------------------------
++// quality is the user preference; resolveTier turns it into a concrete
++// rendering tier that drives data-perf on the stage (which gates the
++// visual-only CSS perf rules). 'auto' defers to detectTier -- a static
++// device heuristic, fleshed out in Phase 3; for now reduced-motion
++// users get low, everyone else high. explicit picks pass straight
++// through. NOTE: tiers only change visuals -- never gameplay
++function prefersReducedMotion(): boolean {
++  return typeof window !== 'undefined' &&
++    !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
++}
++function detectTier(): Hole2Tier {
++  if (prefersReducedMotion()) return 'low';
++  return 'high';
++}
++function resolveTier(quality: Hole2Quality): Hole2Tier {
++  if (quality === 'low' || quality === 'med' || quality === 'high') return quality;
++  return detectTier();
++}
++function readQualityPref(): Hole2Quality {
++  try {
++    const q = localStorage.getItem('hole2-quality');
++    if (q === 'low' || q === 'med' || q === 'high' || q === 'auto') return q;
++  } catch { /* localStorage may be disabled -- ignore */ }
++  return 'auto';
++}
++
+ // ---- main component -------------------------------------------------
+ export function Hole2Page() {
+   const [activeIdx, setActiveIdx] = useState<number>(-1);
+@@ -555,6 +582,25 @@ export function Hole2Page() {
+   const [defeated, setDefeated] = useState(false);
+   const handleDefeat = useCallback(() => setDefeated(true), []);
+ 
++  // perf tiering. perfQuality is the persisted preference; perfTier is
++  // the resolved concrete tier rendered as data-perf on the stage, which
++  // gates the visual-only CSS perf rules. React is the single source of
++  // truth -- the BEGIN-screen toggle + AdminPanel route changes through
++  // handlePerfChange, and the engine's Phase-3 auto-downgrade fires it
++  // with a forcedTier (drops visuals without overwriting the 'auto' pref)
++  const [perfQuality, setPerfQuality] = useState<Hole2Quality>(() => readQualityPref());
++  const [perfTier, setPerfTier] = useState<Hole2Tier>(() => resolveTier(readQualityPref()));
++  const handlePerfChange = useCallback((quality: Hole2Quality, forcedTier?: Hole2Tier) => {
++    if (forcedTier) {
++      // Phase-3 runtime downgrade -- drop the visual tier, keep the pref
++      setPerfTier(forcedTier);
++      return;
++    }
++    setPerfQuality(quality);
++    setPerfTier(resolveTier(quality));
++    try { localStorage.setItem('hole2-quality', quality); } catch { /* ignore */ }
++  }, []);
++
+   // dialogue bg music -- needs the yt iframe api because the playback
+   // trigger (first dialogue-advance click) isn't on the iframe itself
+   const { play: playDialogueMusic, stop: stopDialogueMusic, containerId: dialogueMusicHostId } =
+@@ -796,6 +842,7 @@ export function Hole2Page() {
+       data-phase={phase}
+       data-arena-ready={arenaReady ? 'true' : 'false'}
+       data-begun={begun ? 'true' : 'false'}
++      data-perf={perfTier}
+     >
+       {/* hidden yt iframe host for the dialogue track -- positioned
+           off-screen via css. the iframe itself can't be zero-sized or
+@@ -889,6 +936,7 @@ export function Hole2Page() {
+           onFightReset={handleFightReset}
+           onDefeat={handleDefeat}
+           onPhaseChange={handlePhaseChange}
++          onPerfChange={handlePerfChange}
+         />
+       )}
+ 
+diff --git a/src/components/hole2/Hole2Game.tsx b/src/components/hole2/Hole2Game.tsx
+index 3cb798a..287dc14 100644
+--- a/src/components/hole2/Hole2Game.tsx
++++ b/src/components/hole2/Hole2Game.tsx
+@@ -5,7 +5,7 @@
+ // the .hole2-game wrapper so they don't bleed into the rest of the
+ // site. unmount cleanly stops the rAF + tears down listeners + audio
+ import { useEffect, useRef } from 'react';
+-import { startHole2Engine, type Hole2EngineHandle } from './engine';
++import { startHole2Engine, type Hole2EngineHandle, type Hole2Quality, type Hole2Tier } from './engine';
+ 
+ // sprite.png IS the boss (the vampire-cloak figure). same file the
+ // rising-from-eclipse transition uses, so the figure that landed in the
+@@ -42,9 +42,13 @@ type Hole2GameProps = {
+   // on the boss track so an early-drained boss bar or admin/dev
+   // scrub doesn't drift the music out of sync with the fight
+   onPhaseChange?: (newPhase: number, canonicalSongSec: number) => void;
++  // fired when the perf tier should change -- engine relays admin
++  // setPerf picks and the Phase-3 auto-downgrade. page-level updates
++  // data-perf + localStorage in response
++  onPerfChange?: (quality: Hole2Quality, forcedTier?: Hole2Tier) => void;
+ };
+ 
+-export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange }: Hole2GameProps) {
++export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange, onPerfChange }: Hole2GameProps) {
+   const rootRef = useRef<HTMLDivElement | null>(null);
+ 
+   useEffect(() => {
+@@ -52,11 +56,11 @@ export function Hole2Game({ onVictory, onPauseChange, onAdminUnlock, onFightRese
+     // ids are unique on the page (this component only mounts once at a
+     // time). returned cleanup cancels the loop + wipes listeners + nukes
+     // appended dom nodes so a re-mount starts fresh
+-    const stop = startHole2Engine({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange });
++    const stop = startHole2Engine({ onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange, onPerfChange });
+     return () => {
+       try { stop(); } catch (_) { /* ignore */ }
+     };
+-  }, [onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange]);
++  }, [onVictory, onPauseChange, onAdminUnlock, onFightReset, onDefeat, onPhaseChange, onPerfChange]);
+ 
+   return (
+     <div ref={rootRef} className="hole2-game">
+diff --git a/src/components/hole2/engine.ts b/src/components/hole2/engine.ts
+index 5fdbe93..cfaa3ee 100644
+--- a/src/components/hole2/engine.ts
++++ b/src/components/hole2/engine.ts
+@@ -11,11 +11,19 @@
+ // imperative handle exposed to the admin panel. all methods write into
+ // the same setPhase / setOutput / state.orbDamage paths the dev keys
+ // use, so the panel + the keyboard shortcuts stay in sync
++export type Hole2Quality = 'auto' | 'low' | 'med' | 'high';
++export type Hole2Tier    = 'low' | 'med' | 'high';
++
+ export type Hole2EngineHandle = {
+   setPhase:        (n: number) => void;
+   setOutput:       (n: number) => void;
+   setOrbDamage:    (on: boolean) => void;
+-  getState:        () => { phase: number; output: number; orbDamage: boolean };
++  // perf tier control. quality is the persisted preference ('auto'
++  // resolves to a concrete tier in React); calling this routes through
++  // onPerfChange so React updates data-perf + localStorage. there are NO
++  // gameplay-affecting tier knobs -- every tier difference is visual CSS
++  setPerf:         (quality: Hole2Quality) => void;
++  getState:        () => { phase: number; output: number; orbDamage: boolean; quality: Hole2Quality; tier: Hole2Tier };
+ };
+ 
+ export type Hole2EngineOpts = {
+@@ -49,6 +57,12 @@ export type Hole2EngineOpts = {
+   // into no-ops, so only the desync-worthy cases actually move the
+   // playhead
+   onPhaseChange?: (newPhase: number, canonicalSongSec: number) => void;
++  // fired when the perf tier should change. quality is the preference
++  // ('auto' | 'low' | 'med' | 'high'); forcedTier is set only by the
++  // Phase-3 runtime auto-downgrade, which drops to a specific lower tier
++  // while keeping quality 'auto' (so localStorage stays 'auto'). React
++  // owns resolution + the data-perf attribute + persistence
++  onPerfChange?: (quality: Hole2Quality, forcedTier?: Hole2Tier) => void;
+ };
+ 
+ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+@@ -3953,12 +3967,32 @@ export function startHole2Engine(opts: Hole2EngineOpts): () => void {
+     setPhase:     (n) => { try { setPhase(n, { forceTitleCard: true }); } catch (_) {} },
+     setOutput:    (n) => { try { setOutput(n); } catch (_) {} },
+     setOrbDamage: (on) => { state.orbDamage = !!on; },
++    // perf is React-owned: just relay the pick. React resolves the tier,
++    // writes data-perf + localStorage. getState reads those back live so
++    // the panel highlight + the Phase-3 sampler see the truth without the
++    // engine duplicating tier state
++    setPerf:      (q) => { try { opts.onPerfChange?.(q); } catch (_) {} },
+     getState:     () => ({
+       phase:     state.phase,
+       output:    state.output,
+-      orbDamage: !!state.orbDamage
++      orbDamage: !!state.orbDamage,
++      quality:   _readQuality(),
++      tier:      _readTier()
+     })
+   };
++  // read the persisted preference + the live resolved tier (data-perf on
++  // the stage, set by React). defaults keep a pre-React-mount read safe
++  function _readQuality(): Hole2Quality {
++    try {
++      const q = localStorage.getItem('hole2-quality');
++      if (q === 'low' || q === 'med' || q === 'high' || q === 'auto') return q;
++    } catch (_) {}
++    return 'auto';
++  }
++  function _readTier(): Hole2Tier {
++    const t = document.querySelector('.hole2-stage')?.getAttribute('data-perf');
++    return (t === 'low' || t === 'med' || t === 'high') ? t : 'high';
++  }
+   function _isDev() { return !!state.devUnlocked; }
+   function _showDevToast(msg) {
+     try {
+diff --git a/src/styles/global.css b/src/styles/global.css
+index ee01d4a..8c39b59 100644
+--- a/src/styles/global.css
++++ b/src/styles/global.css
+@@ -5112,3 +5112,36 @@ html.hole-exit-white-in::before {
+    children from existing on remount. with that fixed, the spawn-grow
+    animations land normally and the children scale in from the center.
+    no !important visibility override needed anymore */
++
++/* ===================================================================
++   hole2 perf tiers -- data-perf is set on .hole2-stage by React
++   (Hole2Page). HIGH has no gates (current visuals). MED/LOW strip GPU-
++   expensive effects only; they never touch gameplay (bullet count,
++   distribution, trajectories, collision are tier-independent). SACRED
++   and untouched at every tier: the ground blur halo (kept, just tighter
++   at MED/LOW) and the 3 boss-trail ghosts (kept, just flat at LOW).
++   These descendant selectors out-specify the base rules (which sit one
++   level deep, either top-level cinematic or nested under .hole2-game),
++   so the filter/display overrides win. =================================== */
++
++/* MED -- drop the wider outer ground-blur pass; tighten the inner halo
++   blur from 22px to 14px. everything else stays at HIGH */
++.hole2-stage[data-perf="med"] .hole2-arena__ground-blur--outer { display: none; }
++.hole2-stage[data-perf="med"] .hole2-arena__ground-blur:not(.hole2-arena__ground-blur--outer) {
++  filter: blur(14px);
++}
++
++/* LOW -- keep the halo (sacred) but at 10px and no outer pass; strip the
++   vignette + every persistent drop-shadow/blur glow. the 3 ghosts stay
++   present (count is sacred) but render flat (no per-ghost blur/glow,
++   normal blend) */
++.hole2-stage[data-perf="low"] .hole2-arena__ground-blur--outer { display: none; }
++.hole2-stage[data-perf="low"] .hole2-arena__ground-blur:not(.hole2-arena__ground-blur--outer) {
++  filter: blur(10px);
++}
++.hole2-stage[data-perf="low"] .hole2-arena__ground-darken { display: none; }
++.hole2-stage[data-perf="low"] .boss__afterimage { filter: none; mix-blend-mode: normal; }
++.hole2-stage[data-perf="low"] .player__sprite { filter: none; }
++.hole2-stage[data-perf="low"] .hole2-arena__box { filter: none; }
++.hole2-stage[data-perf="low"] .boss { filter: none; }
++.hole2-stage[data-perf="low"] .boss[data-hit="true"] { filter: none; }
+-- 
+2.43.0
+

@@ -1,0 +1,236 @@
+From e368ab0ac58020a975a3ab4ede5c0652063d18c6 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 25 May 2026 04:29:05 +0000
+Subject: [PATCH 3/4] =?UTF-8?q?perf(hole2):=20Phase=202b=20=E2=80=94=20qua?=
+ =?UTF-8?q?lity=20toggle=20UI,=20AdminPanel=20PERF,=20pause=20readout?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Surfaces the tier system to the player + dev:
+
+- BEGIN-screen perf toggle (LOW | MED | HIGH | AUTO) above the begin box,
+  shown on arena-ready and hidden on begun. A one-shot pre-fight pick
+  routed through handlePerfChange (updates data-perf + localStorage).
+- AdminPanel PERF section mirroring snap.quality, calling api.setPerf for
+  live mid-fight swaps on the dev surface.
+- PauseOverlay shows the active quality tier.
+
+Gothic-mono styling matches the begin label; red active/hover state.
+---
+ src/components/Hole2Page.tsx          | 41 ++++++++++++++++-
+ src/components/hole2/AdminPanel.tsx   | 24 ++++++++++
+ src/components/hole2/PauseOverlay.tsx |  7 ++-
+ src/styles/global.css                 | 63 +++++++++++++++++++++++++++
+ 4 files changed, 133 insertions(+), 2 deletions(-)
+
+diff --git a/src/components/Hole2Page.tsx b/src/components/Hole2Page.tsx
+index 468825d..090f8a1 100644
+--- a/src/components/Hole2Page.tsx
++++ b/src/components/Hole2Page.tsx
+@@ -921,6 +921,7 @@ export function Hole2Page() {
+       {phase === 'arena' && !begun && (
+         <>
+           <HolePlayer />
++          <PerfToggle quality={perfQuality} tier={perfTier} onPick={handlePerfChange} />
+           <BeginBox onBegin={handleBegin} />
+         </>
+       )}
+@@ -952,7 +953,7 @@ export function Hole2Page() {
+           document.visibilitychange -> hidden). engine handles the
+           actual freeze; this layer just tells the player what
+           happened + what key resumes it */}
+-      {paused && <PauseOverlay />}
++      {paused && <PauseOverlay tier={perfTier} />}
+ 
+       {/* pixel-art fireworks + gothic caption. mounts once and stays
+           up; the user navigates away via REND or the hash menu */}
+@@ -966,6 +967,44 @@ export function Hole2Page() {
+   );
+ }
+ 
++// ---- perf toggle ----------------------------------------------------
++// graphics-quality pills, shown above the BEGIN box during arena-ready.
++// a one-shot pick before the fight starts (no mid-fight live-swap, so no
++// active-entity migration). routes through onPick -> handlePerfChange,
++// which updates data-perf + persists. pills stopPropagation so a click
++// doesn't bubble to the stage / begin box
++function PerfToggle({
++  quality,
++  tier,
++  onPick
++}: {
++  quality: Hole2Quality;
++  tier: Hole2Tier;
++  onPick: (q: Hole2Quality) => void;
++}) {
++  const opts: Hole2Quality[] = ['low', 'med', 'high', 'auto'];
++  return (
++    <div className="hole2-perf-toggle" role="group" aria-label="graphics quality">
++      <span className="hole2-perf-toggle__label">quality</span>
++      {opts.map((q) => (
++        <button
++          key={q}
++          type="button"
++          className="hole2-perf-toggle__pill"
++          data-active={quality === q ? 'true' : 'false'}
++          onClick={(e) => {
++            e.preventDefault();
++            e.stopPropagation();
++            onPick(q);
++          }}
++        >
++          {q === 'auto' ? `auto (${tier})` : q}
++        </button>
++      ))}
++    </div>
++  );
++}
++
+ // ---- begin box ------------------------------------------------------
+ // gothic dialogue-style call-to-action at the bottom of the arena.
+ // reuses DialogueBox for the evildialoge.png border so it sits in the
+diff --git a/src/components/hole2/AdminPanel.tsx b/src/components/hole2/AdminPanel.tsx
+index 17b10d7..3be6753 100644
+--- a/src/components/hole2/AdminPanel.tsx
++++ b/src/components/hole2/AdminPanel.tsx
+@@ -105,6 +105,30 @@ export function AdminPanel({ api }: { api: Hole2EngineHandle }) {
+           </button>
+         </div>
+       </section>
++
++      <section className="hole2-admin__section">
++        <div className="hole2-admin__label">PERF</div>
++        <div className="hole2-admin__grid hole2-admin__grid--perf">
++          {(['low', 'med', 'high', 'auto'] as const).map((q) => {
++            const active = snap.quality === q;
++            return (
++              <button
++                key={q}
++                type="button"
++                className="hole2-admin__btn"
++                data-active={active ? 'true' : 'false'}
++                title={q === 'auto' ? `auto -> ${snap.tier}` : q}
++                onClick={() => {
++                  api.setPerf(q);
++                  setSnap(api.getState());
++                }}
++              >
++                {q.toUpperCase()}
++              </button>
++            );
++          })}
++        </div>
++      </section>
+     </div>
+   );
+ }
+diff --git a/src/components/hole2/PauseOverlay.tsx b/src/components/hole2/PauseOverlay.tsx
+index 7e97d1b..3d2867a 100644
+--- a/src/components/hole2/PauseOverlay.tsx
++++ b/src/components/hole2/PauseOverlay.tsx
+@@ -3,7 +3,7 @@
+ // freeze (game-time clock, audio, key input). gothic register matches
+ // the phase-transition title-card so the pause reads as part of the
+ // movement
+-export function PauseOverlay() {
++export function PauseOverlay({ tier }: { tier?: string }) {
+   return (
+     <div className="hole2-pause" aria-live="polite">
+       <div className="hole2-pause__dim" aria-hidden="true" />
+@@ -13,6 +13,11 @@ export function PauseOverlay() {
+         <div className="hole2-pause__hint">
+           press <kbd>Esc</kbd> to resume
+         </div>
++        {tier && (
++          <div className="hole2-pause__hint">
++            quality: {tier.toUpperCase()} &mdash; re-pick before BEGIN to change
++          </div>
++        )}
+       </div>
+     </div>
+   );
+diff --git a/src/styles/global.css b/src/styles/global.css
+index 8c39b59..d2a25e7 100644
+--- a/src/styles/global.css
++++ b/src/styles/global.css
+@@ -2485,6 +2485,68 @@ html.hole-exit-white-in::before {
+ }
+ .hole2-begin:focus-visible { outline: none; }
+ 
++/* perf toggle -- graphics-quality pills above the BEGIN box. shares the
++   begin box's arena-ready show / begun hide gates so it appears + leaves
++   with the call-to-action. gothic-mono register, red active/hover to
++   match .hole2-begin__label */
++.hole2-perf-toggle {
++  position: absolute;
++  left: 50%;
++  transform: translateX(-50%);
++  bottom: 11vh;
++  display: flex;
++  align-items: center;
++  gap: 0.5em;
++  z-index: 14;
++  opacity: 0;
++  pointer-events: none;
++  transition: opacity 520ms ease;
++}
++.hole2-stage[data-phase="arena"][data-arena-ready="true"]:not([data-begun="true"]) .hole2-perf-toggle {
++  opacity: 1;
++  pointer-events: auto;
++}
++.hole2-stage[data-begun="true"] .hole2-perf-toggle {
++  opacity: 0;
++  pointer-events: none;
++}
++.hole2-perf-toggle__label {
++  font-family: var(--font-mono);
++  font-size: 0.62rem;
++  letter-spacing: 0.34em;
++  text-transform: uppercase;
++  color: rgba(255, 255, 255, 0.5);
++  padding-left: 0.34em;
++}
++.hole2-perf-toggle__pill {
++  font-family: var(--font-mono);
++  font-size: 0.62rem;
++  letter-spacing: 0.18em;
++  text-transform: uppercase;
++  color: rgba(255, 255, 255, 0.55);
++  background: rgba(8, 6, 10, 0.6);
++  border: 1px solid rgba(255, 255, 255, 0.18);
++  padding: 0.32em 0.6em;
++  cursor: pointer;
++  transition:
++    color 160ms linear,
++    border-color 180ms ease,
++    text-shadow 200ms ease;
++}
++.hole2-perf-toggle__pill:hover {
++  color: #fff;
++  border-color: rgba(255, 255, 255, 0.4);
++}
++.hole2-perf-toggle__pill[data-active="true"] {
++  color: #ff2a2a;
++  border-color: rgba(255, 42, 42, 0.6);
++  text-shadow: 0 0 8px rgba(255, 42, 42, 0.4);
++}
++.hole2-perf-toggle__pill:focus-visible {
++  outline: none;
++  border-color: rgba(255, 42, 42, 0.6);
++}
++
+ /* player placeholder -- standin for the real player sprite until that's
+    authored. positions just below the arena box on arena-ready, then
+    slides up to settle near the bottom-middle of the inner playfield
+@@ -4952,6 +5014,7 @@ html.hole-exit-white-in::before {
+ }
+ .hole2-admin__grid--phase  { grid-template-columns: repeat(4, 1fr); }
+ .hole2-admin__grid--output { grid-template-columns: repeat(5, 1fr); }
++.hole2-admin__grid--perf   { grid-template-columns: repeat(4, 1fr); }
+ .hole2-admin__toggles {
+   display: flex;
+   flex-direction: column;
+-- 
+2.43.0
+

@@ -3,6 +3,8 @@
 // sub-ranges with inline --d (start) and --span (duration).
 // the bigger 3 (Benchmark/OLS/GMM) annotate the actual datasets and
 // results from the underlying work; the others stay closer to sketch.
+// PRAME + Benchmark pull real artifacts from the underlying repos
+// (TCGA-SKCM attention heatmaps; MHIST 5-fold ROC curves).
 import './animations.css';
 import type { CSSProperties } from 'react';
 
@@ -13,6 +15,12 @@ const v = (d: number, span?: number): CSSProperties => {
   if (span !== undefined) out['--span'] = span;
   return out as CSSProperties;
 };
+
+// public/ assets resolved against vite BASE so the same paths work for
+// /portfolio/ on gh-pages and / locally
+const BASE = import.meta.env.BASE_URL;
+const PR = `${BASE}projects/prame/`;
+const BE = `${BASE}projects/bench/`;
 
 export function ProjectAnimation({ slug }: Props) {
   switch (slug) {
@@ -27,44 +35,106 @@ export function ProjectAnimation({ slug }: Props) {
 }
 
 /* ────────────────────────────────────────────────────────────────────────
- * 1. PRAME / attention — same idea, slightly enriched (tile rows label,
- *    attention region marker, slide label).
+ * 1. PRAME / attention -- two held-out TCGA-SKCM slides side-by-side with
+ *    UNI attention heatmaps baked in. Tile grid overlays first (abstract),
+ *    then dissolves to reveal the actual slides. Confidence pills land
+ *    on top of each panel. The model attends to a focal tumor nest in the
+ *    TP case (right side of A44O) and stays diffuse across A8GE (TN).
  * ──────────────────────────────────────────────────────────────────────── */
 function PrameAttention() {
-  const cells = Array.from({ length: 36 });
-  const attention = new Set([14, 15, 16, 20, 21, 22, 26, 27, 28]);
+  // 4x6 = 24 tile overlay, animated to fade in then out, revealing the
+  // actual heatmap PNG underneath. attention indices roughly mark the
+  // dense-tumor region in the TP slide.
+  const tiles = Array.from({ length: 24 });
+  // tiles that sit over the high-attention nest on the TP panel
+  const att = new Set([10, 11, 16, 17]);
   return (
     <div className="anim anim--prame anim--large" aria-hidden="true">
       <svg viewBox="0 0 480 280" role="img" aria-label="WSI attention demo">
-        <text x="20" y="22" className="anim-title">whole-slide attention</text>
-        <text x="20" y="38" className="anim-sub">UNI features · attention-MIL</text>
+        <defs>
+          {/* faint inner-stroke around each slide panel so the white slide
+              background doesn't bleed into the dark canvas chrome */}
+          <clipPath id="prame-clip-tp">
+            <rect x="20" y="58" width="200" height="184" rx="3" />
+          </clipPath>
+          <clipPath id="prame-clip-tn">
+            <rect x="260" y="58" width="200" height="184" rx="3" />
+          </clipPath>
+        </defs>
 
-        <g transform="translate(20 60)">
-          {cells.map((_, i) => {
-            const x = (i % 6) * 64;
-            const y = Math.floor(i / 6) * 36;
-            const att = attention.has(i);
-            const d = (i / 36) * 0.45;
+        <text x="20" y="22" className="anim-title">held-out attention · UNI · TCGA-SKCM</text>
+        <text x="20" y="38" className="anim-sub">attention-MIL · 5-fold CV · confidence-gated routing</text>
+
+        {/* TP slide -- the model lands on a focal tumor nest */}
+        <g className="prame-panel prame-panel--tp">
+          <image
+            href={`${PR}tp_a44o_thumb.png`}
+            x="20" y="58" width="200" height="184"
+            preserveAspectRatio="xMidYMid slice"
+            clipPath="url(#prame-clip-tp)"
+          />
+          <rect
+            x="20" y="58" width="200" height="184" rx="3"
+            className="prame-frame"
+          />
+        </g>
+
+        {/* TN slide -- diffuse, no focal hot-spot */}
+        <g className="prame-panel prame-panel--tn">
+          <image
+            href={`${PR}tn_a8ge_thumb.png`}
+            x="260" y="58" width="200" height="184"
+            preserveAspectRatio="xMidYMid slice"
+            clipPath="url(#prame-clip-tn)"
+          />
+          <rect
+            x="260" y="58" width="200" height="184" rx="3"
+            className="prame-frame"
+          />
+        </g>
+
+        {/* abstract tile overlay -- fades in over the TP slide early, then
+            dissolves out to reveal the real attention pattern */}
+        <g clipPath="url(#prame-clip-tp)">
+          {tiles.map((_, i) => {
+            const col = i % 6;
+            const row = Math.floor(i / 6);
+            const x = 20 + col * 34;
+            const y = 58 + row * 46;
+            const d = 0.04 + (i / 24) * 0.20;
             return (
               <rect
                 key={i}
                 x={x}
                 y={y}
-                width={56}
-                height={32}
-                className={`prame-tile ${att ? 'prame-tile--att' : ''}`}
+                width={32}
+                height={44}
+                className={`prame-tile-ov ${att.has(i) ? 'prame-tile-ov--att' : ''}`}
                 style={v(d, 0.25)}
               />
             );
           })}
         </g>
 
-        <circle className="prame-bloom" cx="240" cy="170" r="64" />
+        {/* terracotta accent ring marking the attended region on the TP panel */}
+        <circle
+          className="prame-bloom"
+          cx="155" cy="170" r="34"
+        />
 
-        <g className="prame-pill">
-          <rect x="356" y="14" width="108" height="22" rx="3" />
-          <text x="410" y="29" textAnchor="middle">PRAME+ · p=0.94</text>
+        {/* confidence pills */}
+        <g className="prame-pill prame-pill--pos">
+          <rect x="22" y="60" width="92" height="20" rx="3" />
+          <text x="68" y="74" textAnchor="middle">PRAME+ · p=0.984</text>
         </g>
+        <g className="prame-pill prame-pill--neg">
+          <rect x="262" y="60" width="92" height="20" rx="3" />
+          <text x="308" y="74" textAnchor="middle">PRAME- · p=0.004</text>
+        </g>
+
+        {/* slide IDs along the bottom edge */}
+        <text x="20" y="260" className="prame-sid">TCGA-EB-A44O · fold 4</text>
+        <text x="260" y="260" className="prame-sid">TCGA-D3-A8GE · fold 1</text>
       </svg>
     </div>
   );
@@ -152,9 +222,10 @@ function Iconograph() {
 }
 
 /* ────────────────────────────────────────────────────────────────────────
- * 4. Benchmark — tall single-panel AUC bars. The earlier ROC + bars
- *    side-by-side was unreadable at the project-card scale. This version
- *    drops the ROC and gives each bar room to breathe.
+ * 4. Benchmark -- AUC bars stacked above the actual 5-fold ROC chart
+ *    pulled straight from the repo (results/cv_roc_curves.png). The bars
+ *    are the headline number, the ROC underneath shows the curves the
+ *    numbers come from.
  * ──────────────────────────────────────────────────────────────────────── */
 function BenchmarkVisual() {
   type Model = { name: string; auc: number; ci: [number, number]; cls: string };
@@ -171,66 +242,75 @@ function BenchmarkVisual() {
   const xFor = (auc: number) => xMin + ((auc - 0.80) / range) * (xMax - xMin);
   const barLen = (auc: number) => xFor(auc) - xMin;
 
+  // bars sit in y 80..210 now, ROC panel below
+  const rowY = (i: number) => 80 + i * 50;
+
   return (
     <div className="anim anim--benchmark anim--bench-tall" aria-hidden="true">
       <svg viewBox="0 0 480 360" role="img" aria-label="MHIST AUC benchmark">
-        <text x="20" y="28" className="anim-title-lg">AUC · linear probe · MHIST</text>
-        <text x="20" y="48" className="anim-sub-lg">
+        <text x="20" y="24" className="anim-title-lg">AUC · linear probe · MHIST</text>
+        <text x="20" y="42" className="anim-sub-lg">
           5-fold stratified · pretraining quality at frozen features
         </text>
 
-        {/* Bars */}
+        {/* Bars -- compressed to make room for the ROC panel below */}
         {models.map((m, i) => {
-          const cy = 96 + i * 78;
+          const cy = rowY(i);
           const len = barLen(m.auc);
           const xLo = xFor(m.ci[0]);
           const xHi = xFor(m.ci[1]);
           return (
             <g key={m.name}>
-              {/* Model name (large, on its own line above the bar) */}
-              <text x={20} y={cy - 10} className="bench-name">{m.name}</text>
-
-              {/* Bar rail */}
+              <text x={20} y={cy - 6} className="bench-name">{m.name}</text>
               <line x1={xMin} y1={cy} x2={xMax} y2={cy} className="ax" />
-              {/* Bar — scroll-driven via stroke-dashoffset */}
               <line
                 x1={xMin} y1={cy}
                 x2={xMin + len} y2={cy}
                 className={`bench-bar ${m.cls}`}
                 style={{
-                  ...v(0.20 + i * 0.12, 0.50),
+                  ...v(0.18 + i * 0.10, 0.45),
                   ['--len' as string]: len
                 } as CSSProperties}
               />
-              {/* Confidence-interval whisker, faded in after the bar settles */}
-              <g style={v(0.72 + i * 0.05, 0.2)}>
-                <line x1={xLo} y1={cy - 9} x2={xLo} y2={cy + 9} className="ci-line" />
-                <line x1={xHi} y1={cy - 9} x2={xHi} y2={cy + 9} className="ci-line" />
+              <g style={v(0.66 + i * 0.04, 0.18)}>
+                <line x1={xLo} y1={cy - 7} x2={xLo} y2={cy + 7} className="ci-line" />
+                <line x1={xHi} y1={cy - 7} x2={xHi} y2={cy + 7} className="ci-line" />
                 <line x1={xLo} y1={cy} x2={xHi} y2={cy} className="ci-line" />
               </g>
-              {/* Large AUC value — counter-animates from 0 → m.auc */}
               <text
                 x={20}
-                y={cy + 22}
+                y={cy + 18}
                 className={`bench-value ${m.cls}`}
                 data-counter={m.auc}
                 data-counter-precision={3}
               >
                 0.000
               </text>
-              {/* 95% CI label below the value */}
-              <text x={92} y={cy + 22} className="bench-ci">
+              <text x={86} y={cy + 18} className="bench-ci">
                 95% CI [{m.ci[0].toFixed(3)}, {m.ci[1].toFixed(3)}]
               </text>
             </g>
           );
         })}
 
-        {/* x-axis ticks */}
-        <line x1={xMin} y1={336} x2={xMax} y2={336} className="ax-ref" />
-        <text x={xMin}  y={350} className="ax-tick">0.80</text>
-        <text x={(xMin + xMax) / 2} y={350} textAnchor="middle" className="ax-tick">AUC</text>
-        <text x={xMax}  y={350} textAnchor="end" className="ax-tick">0.95</text>
+        {/* x-axis ticks under the bars */}
+        <line x1={xMin} y1={234} x2={xMax} y2={234} className="ax-ref" />
+        <text x={xMin}  y={246} className="ax-tick">0.80</text>
+        <text x={(xMin + xMax) / 2} y={246} textAnchor="middle" className="ax-tick">AUC</text>
+        <text x={xMax}  y={246} textAnchor="end" className="ax-tick">0.95</text>
+
+        {/* divider before the ROC artifact panel */}
+        <line x1={20} y1={262} x2={460} y2={262} className="bench-divider" />
+        <text x={20} y={278} className="anim-sub">results/cv_roc_curves.png -- 5-fold ROC with std-band</text>
+
+        {/* the actual ROC chart from the repo -- fades in last */}
+        <g className="bench-roc">
+          <image
+            href={`${BE}cv_roc_thumb.png`}
+            x={20} y={284} width={440} height={70}
+            preserveAspectRatio="xMidYMid meet"
+          />
+        </g>
       </svg>
     </div>
   );
