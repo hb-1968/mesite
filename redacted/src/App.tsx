@@ -4,7 +4,6 @@ import { StatusBar } from './components/StatusBar';
 import { Hero } from './components/Hero';
 import { About } from './components/About';
 import { Focus } from './components/Focus';
-import { Experience } from './components/Experience';
 import { ProjectsTeaser } from './components/ProjectsTeaser';
 import { Skills } from './components/Skills';
 import { History } from './components/History';
@@ -52,7 +51,6 @@ export default function App() {
             <Hero />
             <About />
             <Focus />
-            <Experience />
             <ProjectsTeaser />
             <Skills />
             <History />

@@ -1,0 +1,31 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Build artifacts
+*.tsbuildinfo
+vite.config.d.ts
+vite.config.js
+
+# Claude -- agent config + project memory, not part of the site build
+.claude/
+.claude.json
+# Markdown -- project notes, agent prompts, planning docs all live as
+# .md files locally but aren't part of the site itself. covers
+# CLAUDE.md, PROJECT.md, and anything else that accumulates
+*.md

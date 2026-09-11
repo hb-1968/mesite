@@ -325,3 +325,113 @@
 
 
 /* reduced motion: useScrollProgress pins progress = 1 already */
+
+/* sst -- the four real panels from the talk figures, plus the
+   displacement quartile bars. panels slide in along the direction the
+   mask actually propagates (support -> query), so the motion carries
+   the method rather than just decorating it. */
+.sst-panel {
+  opacity: var(--local);
+  transform: translateX(calc((1 - var(--local)) * -6px));
+}
+.sst-panel image { image-rendering: auto; }
+.sst-frame {
+  fill: none;
+  stroke: var(--fg-faint);
+  stroke-width: 1;
+}
+.sst-cap {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: var(--fg-dim);
+  letter-spacing: 0.04em;
+}
+.sst-arrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  fill: var(--fg-faint);
+  opacity: var(--local);
+}
+.sst-band {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: var(--fg-muted);
+}
+.sst-bar {
+  stroke: var(--sage);
+  stroke-width: 7;
+  stroke-linecap: butt;
+  stroke-dasharray: 400;
+  stroke-dashoffset: calc(400 - var(--local) * var(--len, 200));
+}
+/* the bottom quartile is the finding, not a footnote -- amber marks it */
+.sst-bar--drop { stroke: var(--amber); }
+.sst-val {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--fg);
+  opacity: var(--local);
+}
+
+/* reasoning topologies -- channel split redrawn from channels.svg */
+.topo-box {
+  fill: none;
+  stroke: var(--fg-faint);
+  stroke-width: 1;
+  rx: 2;
+  opacity: var(--local);
+}
+.topo-box--out { stroke: var(--amber); }
+.topo-lbl {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  fill: var(--fg);
+  letter-spacing: 0.04em;
+  opacity: var(--local);
+}
+.topo-node { fill: var(--fg-muted); opacity: var(--local); }
+.topo-edge { stroke-width: 1.5; opacity: var(--local); }
+.topo-edge--sup { stroke: var(--sage); }
+.topo-edge--att { stroke: var(--amber); }
+.topo-wire {
+  fill: none;
+  stroke: var(--fg-faint);
+  stroke-width: 1;
+  stroke-dasharray: 120;
+  stroke-dashoffset: calc(120 - var(--local) * 120);
+}
+.topo-wire--join { stroke-dasharray: 90; stroke-dashoffset: calc(90 - var(--local) * 90); }
+.topo-chan {
+  fill: none;
+  stroke-width: 1;
+  rx: 2;
+  opacity: var(--local);
+}
+.ch--sup { stroke: var(--sage); }
+.ch--att { stroke: var(--amber); }
+.ch--con { stroke: var(--fg-faint); }
+.topo-chan-name {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--fg);
+  opacity: var(--local);
+}
+.topo-chan-note {
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  fill: var(--fg-dim);
+  opacity: var(--local);
+}
+.topo-gate {
+  fill: none;
+  stroke: var(--fg-faint);
+  stroke-width: 1;
+  rx: 2;
+  opacity: var(--local);
+}
+.topo-gate-val {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  fill: var(--amber);
+  opacity: var(--local);
+}

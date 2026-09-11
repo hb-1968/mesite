@@ -1,0 +1,93 @@
+:root {
+  /* aged-brass palette -- pulled-down saturation, darker ground from
+     cinder, slight cool nudge so undertones lean neutral. amber kept a
+     touch goldier so it still anchors the eye.
+     all accents pass AA against bg-base. light variant below. */
+  --bg-deep:    #100D07;
+  --bg-base:    #1E1A12;
+  --bg-panel:   #2A2418;
+  --bg-elev:    #382F1F;
+  --bg-overlay: #4A4232;
+
+  --fg:         #DCD0A8;
+  --fg-muted:   #B5A87E;
+  --fg-dim:     #7C7252;
+  --fg-faint:   #4F4938;
+
+  /* amber pulled into the same saturation band as sage/terra/olive --
+     was reading as the only loud one in the family */
+  --amber:      #B89A6A;
+  --amber-hi:   #CFB48A;
+  --sage:       #7CA89D;
+  --terracotta: #BD8B6E;
+  --olive:      #95B07A;
+  --plum:       #A88895;
+
+  --scanline:   rgba(255, 255, 255, 0.010);
+
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fs-xs: 0.78rem;
+  --fs-sm: 0.875rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: 1.5rem;
+  --fs-2xl: 2.25rem;
+  --fs-3xl: clamp(2.5rem, 6.5vw, 5.5rem);
+
+  --lh-tight: 1.15;
+  --lh-snug:  1.35;
+  --lh-base:  1.6;
+
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
+  --sp-9: 96px;
+  --sp-10: 128px;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+
+  --rule: 1px solid var(--fg-faint);
+
+  /* dash-rule tokens -- used by .wipe-rule, .section dividers, <hr>.
+     gives lines a CLI -------- feel. tune here, propagates everywhere */
+  --dash-len: 12px;
+  --dash-gap: 4px;
+  --dash-stride: 16px;
+  --dash-thickness: 3px;
+
+  --max-w: 1180px;
+}
+
+/* light mode -- same aged-brass character translated to paper.
+   surfaces: warm pale brass/oat. ink: deep walnut. accents are deeper +
+   slightly cooler so they hit AA on the lighter ground */
+:root[data-theme='light'] {
+  --bg-deep:    #F0E7C9;
+  --bg-base:    #E5D9B8;
+  --bg-panel:   #D6C8A2;
+  --bg-elev:    #C7B98C;
+  --bg-overlay: #AFA075;
+
+  --fg:         #28221A;
+  --fg-muted:   #4F4836;
+  --fg-dim:     #76705A;
+  --fg-faint:   #A89E84;
+
+  --amber:      #6E5934;
+  --amber-hi:   #564328;
+  --sage:       #2A6357;
+  --terracotta: #80523A;
+  --olive:      #4F6234;
+  --plum:       #6F4A56;
+
+  --scanline:   rgba(0, 0, 0, 0.014);
+
+  color-scheme: light;
+}

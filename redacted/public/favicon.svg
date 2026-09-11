@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 -1 14 11" shape-rendering="crispEdges">
+  <rect x="-1" y="-1" width="14" height="11" fill="#1E1A12"/>
+  <g fill="#B89A6A">
+    <!-- h: left stem, crossbar, right stem (above rail) -->
+    <rect x="0" y="0" width="1" height="4"/>
+    <rect x="0" y="4" width="5" height="1"/>
+    <rect x="4" y="5" width="1" height="3"/>
+    <!-- b: left ascender, top bar, right side (above rail) -->
+    <rect x="7" y="0" width="1" height="4"/>
+    <rect x="7" y="4" width="5" height="1"/>
+    <rect x="11" y="5" width="1" height="3"/>
+    <!-- baseline rail: h's right stem foot → joiner bridge → b's bowl bottom -->
+    <rect x="4" y="8" width="8" height="1"/>
+  </g>
+</svg>

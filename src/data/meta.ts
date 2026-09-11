@@ -7,7 +7,7 @@ export const meta = {
   emailAlt: 'hbridges@bu.edu',
   phone: '(513) 515-1469',
   github: 'https://github.com/hb-1968',
-  linkedin: 'https://www.linkedin.com/in/hunterbridges/',
+  linkedin: 'https://www.linkedin.com/in/hunter-bridges-b86803303/',
   resumeUrl: '/resume.pdf'
 } as const;
 

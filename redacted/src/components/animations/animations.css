@@ -1,0 +1,4 @@
+/* styles for the per-project SVG animations. the redacted build
+   strips the animations themselves, so this file is intentionally
+   empty -- kept around so the ProjectAnimation import path keeps
+   resolving without further edits. */

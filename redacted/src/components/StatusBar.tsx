@@ -183,7 +183,7 @@ export function StatusBar({ theme, onToggleTheme, page }: Props) {
           }}
         >
           <span>{meta.handle}</span>
-          <span className="statusbar__handle-suffix">@bu</span>
+          <span className="statusbar__handle-suffix">@███</span>
         </span>
         <span className="statusbar__colon" style={{ color: 'var(--fg-dim)' }}>:</span>
         <SectionsDropdown
@@ -206,7 +206,6 @@ export function StatusBar({ theme, onToggleTheme, page }: Props) {
           />
 
           {page === 'main' && <>
-            <a href="#experience" className="statusbar__link statusbar__link--secondary">research</a>
             <a href="#skills" className="statusbar__link statusbar__link--secondary">skills</a>
             <a href="#contact" className="statusbar__link statusbar__link--secondary">contact</a>
           </>}

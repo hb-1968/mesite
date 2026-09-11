@@ -31,7 +31,7 @@ export const education = {
 };
 
 export const conferences = [
-  { name: 'AAD Annual Meeting',                    when: 'attended' },
+  { name: 'AAD Annual & Summer Innovation Meetings', when: 'attended' },
   { name: 'Noah Worcester Dermatological Society', when: 'attended' },
   { name: 'ASDP Annual Meeting',                   when: 'attended' }
 ];

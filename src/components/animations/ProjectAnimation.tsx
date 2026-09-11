@@ -21,17 +21,191 @@ const v = (d: number, span?: number): CSSProperties => {
 const BASE = import.meta.env.BASE_URL;
 const PR = `${BASE}projects/prame/`;
 const BE = `${BASE}projects/bench/`;
+const ST = `${BASE}projects/sst/`;
 
 export function ProjectAnimation({ slug }: Props) {
   switch (slug) {
-    case 'prame-melanoma':      return <PrameAttention />;
-    case 'package-tracking':    return <PackageTrack />;
-    case 'iconograph':          return <Iconograph />;
-    case 'pathology-benchmark': return <BenchmarkVisual />;
-    case 'gmm-rp':              return <GmmEM />;
-    case 'ols-poly':            return <OlsPolyFit />;
-    default:                    return null;
+    case 'prame-melanoma':        return <PrameAttention />;
+    case 'package-tracking':      return <PackageTrack />;
+    case 'iconograph':            return <Iconograph />;
+    case 'pathology-benchmark':   return <BenchmarkVisual />;
+    case 'gmm-rp':                return <GmmEM />;
+    case 'ols-poly':              return <OlsPolyFit />;
+    case 'sst-tracking':          return <SstTracking />;
+    case 'reasoning-topologies':  return <ReasoningChannels />;
+    default:                      return null;
   }
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * 7. SST / one-shot tracking -- the actual four-panel run from
+ *    docs/talk/figures: labeled support, its mask, the unlabeled query,
+ *    and what the tracker propagates. Panels land left-to-right in the
+ *    order the method sees them, then the displacement quartiles fade in
+ *    underneath -- those are the real numbers behind corr = -0.866.
+ * ──────────────────────────────────────────────────────────────────────── */
+function SstTracking() {
+  // panel geometry: 4 across, support pair is portrait, query pair landscape
+  const panels = [
+    { src: `${ST}p1_support.png`,      label: 'support',     x: 20  },
+    { src: `${ST}p2_support_mask.png`, label: 'its mask',    x: 132 },
+    { src: `${ST}p3_query.png`,        label: 'query',       x: 244 },
+    { src: `${ST}p4_prediction.png`,   label: 'propagated',  x: 356 }
+  ];
+
+  // real per-quartile mIoU from the displacement study (n = 500)
+  const quart = [
+    { band: '7.7-23.1 px',   miou: 82.8 },
+    { band: '23.1-40.5 px',  miou: 75.1 },
+    { band: '40.5-70.5 px',  miou: 73.0 },
+    { band: '70.5-464.6 px', miou: 50.8 }
+  ];
+  const bx = 150;
+  const bw = 250;
+  const scale = (m: number) => (m / 90) * bw;
+
+  return (
+    <div className="anim anim--sst anim--bench-tall" aria-hidden="true">
+      <svg viewBox="0 0 480 360" role="img" aria-label="one-shot trait segmentation by tracking">
+        <text x="20" y="22" className="anim-title">one-shot trait segmentation · SAM 2/3</text>
+        <text x="20" y="38" className="anim-sub">
+          two-frame pseudo-video · mask propagates support to query
+        </text>
+
+        {panels.map((p, i) => (
+          <g key={p.label} className="sst-panel" style={v(0.06 + i * 0.13, 0.30)}>
+            {/* meet, not slice -- the support pair is portrait (247x372) and
+                slice would crop the specimen's head off */}
+            <image
+              href={p.src}
+              x={p.x} y={54} width={104} height={104}
+              preserveAspectRatio="xMidYMid meet"
+            />
+            <rect x={p.x} y={54} width={104} height={104} className="sst-frame" />
+            <text x={p.x} y={170} className="sst-cap">{p.label}</text>
+          </g>
+        ))}
+
+        {/* arrows tracing the direction the mask actually travels */}
+        {[124, 236, 348].map((x, i) => (
+          <text key={x} x={x} y={110} className="sst-arrow" style={v(0.14 + i * 0.13, 0.16)}>
+            &#8594;
+          </text>
+        ))}
+
+        <line x1={20} y1={188} x2={460} y2={188} className="bench-divider" style={v(0.52, 0.10)} />
+        <text x={20} y={206} className="anim-sub" style={v(0.54, 0.10)}>
+          mIoU by query displacement from the train median -- corr -0.866, n = 500
+        </text>
+
+        {/* paper's butterfly target. drawn before the bars so the dashed
+            rule passes under the value labels instead of through them */}
+        <g style={v(0.86, 0.12)}>
+          <line x1={bx + scale(81)} y1={216} x2={bx + scale(81)} y2={342} className="ax-ref" />
+          <text x={bx + scale(81) + 4} y={352} className="ax-tick">paper 81.0</text>
+        </g>
+
+        {quart.map((q, i) => {
+          const cy = 228 + i * 27;
+          const len = scale(q.miou);
+          return (
+            <g key={q.band}>
+              <text x={20} y={cy + 4} className="sst-band">{q.band}</text>
+              <line x1={bx} y1={cy} x2={bx + bw} y2={cy} className="ax" />
+              <line
+                x1={bx} y1={cy} x2={bx + len} y2={cy}
+                className={`sst-bar${i === 3 ? ' sst-bar--drop' : ''}`}
+                style={{ ...v(0.60 + i * 0.07, 0.34), ['--len' as string]: len } as CSSProperties}
+              />
+              <text x={bx + len + 8} y={cy + 4} className="sst-val" style={v(0.74 + i * 0.05, 0.14)}>
+                {q.miou.toFixed(1)}
+              </text>
+            </g>
+          );
+        })}
+
+      </svg>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────────────
+ * 8. Reasoning Topologies -- the three-channel split from
+ *    docs/debrief/fig/channels.svg, redrawn legibly. There is no results
+ *    plot to show yet; the honest artifact is the extractor qualification,
+ *    so that is what lands at the bottom.
+ * ──────────────────────────────────────────────────────────────────────── */
+function ReasoningChannels() {
+  const channels = [
+    { key: 'support',      sign: '+', note: 'supportive edges',   cls: 'ch--sup' },
+    { key: 'attack',       sign: '-', note: 'contrastive edges',  cls: 'ch--att' },
+    { key: 'constitutive', sign: '0', note: 'masked from prop.',  cls: 'ch--con' }
+  ];
+
+  // the qualification run against the vetted 32-unit key
+  const gates = [
+    { label: 'node recall',   value: '0.87'  },
+    { label: 'schema conf.',  value: '31/31' },
+    { label: 'quote fidelity', value: '0.94' }
+  ];
+
+  return (
+    <div className="anim anim--topo" aria-hidden="true">
+      <svg viewBox="0 0 480 280" role="img" aria-label="channelized GATv2 over framework DAGs">
+        <text x="20" y="22" className="anim-title">framework DAG · channelized GATv2</text>
+        <text x="20" y="38" className="anim-sub">
+          stock GATv2 is provably invariant to flipping every edge&#39;s valence
+        </text>
+
+        {/* the source DAG -- typed nodes, polarity-typed edges */}
+        <g style={v(0.05, 0.22)}>
+          <rect x={20} y={58} width={96} height={96} className="topo-box" />
+          <text x={68} y={82} textAnchor="middle" className="topo-lbl">DAG</text>
+          {[[68, 100], [44, 130], [92, 130]].map(([cx, cy], i) => (
+            <circle key={i} cx={cx} cy={cy} r={6} className="topo-node" />
+          ))}
+          <line x1={64} y1={106} x2={48} y2={124} className="topo-edge topo-edge--sup" />
+          <line x1={72} y1={106} x2={88} y2={124} className="topo-edge topo-edge--att" />
+        </g>
+
+        {/* fan out into the three channels */}
+        {channels.map((c, i) => {
+          const cy = 62 + i * 40;
+          return (
+            <g key={c.key} style={v(0.24 + i * 0.09, 0.24)}>
+              <path d={`M116 106 C 150 106, 150 ${cy + 14}, 176 ${cy + 14}`} className={`topo-wire ${c.cls}`} />
+              <rect x={176} y={cy} width={150} height={28} className={`topo-chan ${c.cls}`} />
+              <text x={186} y={cy + 13} className="topo-chan-name">{c.sign} {c.key}</text>
+              <text x={186} y={cy + 23} className="topo-chan-note">{c.note}</text>
+            </g>
+          );
+        })}
+
+        {/* combine -- h = MLP([h+ || h-] || h_c) */}
+        <g style={v(0.54, 0.18)}>
+          {[76, 116, 156].map((cy) => (
+            <path key={cy} d={`M326 ${cy} C 352 ${cy}, 352 116, 372 116`} className="topo-wire topo-wire--join" />
+          ))}
+          <rect x={372} y={94} width={88} height={44} className="topo-box topo-box--out" />
+          <text x={416} y={112} textAnchor="middle" className="topo-lbl">combine</text>
+          <text x={416} y={126} textAnchor="middle" className="topo-chan-note">sign is multiplicative</text>
+        </g>
+
+        <line x1={20} y1={182} x2={460} y2={182} className="bench-divider" style={v(0.66, 0.10)} />
+        <text x={20} y={200} className="anim-sub" style={v(0.68, 0.10)}>
+          extractor qualification · 122B · vLLM + xgrammar · 88 human verdicts
+        </text>
+
+        {gates.map((g, i) => (
+          <g key={g.label} style={v(0.74 + i * 0.06, 0.18)}>
+            <rect x={20 + i * 148} y={214} width={136} height={44} className="topo-gate" />
+            <text x={88 + i * 148} y={236} textAnchor="middle" className="topo-gate-val">{g.value}</text>
+            <text x={88 + i * 148} y={250} textAnchor="middle" className="topo-chan-note">{g.label}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
 }
 
 /* ────────────────────────────────────────────────────────────────────────
