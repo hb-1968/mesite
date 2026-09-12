@@ -18,11 +18,15 @@ import { Scrollbar } from './components/Scrollbar';
 import { useReveal } from './hooks/useReveal';
 import { useScrollProgress } from './hooks/useScrollProgress';
 import { useRoute } from './hooks/useRoute';
+import { useLenis } from './hooks/useLenis';
 import { useTheme } from './hooks/useTheme';
 
 export default function App() {
   const { theme, toggle } = useTheme();
   const { route, goTo } = useRoute();
+  // smooth scroll -- the scrubbed anims need interpolated scroll or the
+  // wipes step from wheel notch to wheel notch
+  useLenis(route.page === 'main' || route.page === 'projects');
   // pass route.page so observers re-scan on page swap -- otherwise newly
   // mounted .reveal / [data-progress] elements stay at opacity 0
   useReveal(route.page);

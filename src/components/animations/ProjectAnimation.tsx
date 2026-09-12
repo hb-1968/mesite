@@ -7,6 +7,7 @@
 // (TCGA-SKCM attention heatmaps; MHIST 5-fold ROC curves).
 import './animations.css';
 import type { CSSProperties } from 'react';
+import contour from '../../data/iconContour.json';
 
 type Props = { slug: string };
 
@@ -22,6 +23,7 @@ const BASE = import.meta.env.BASE_URL;
 const PR = `${BASE}projects/prame/`;
 const BE = `${BASE}projects/bench/`;
 const ST = `${BASE}projects/sst/`;
+const IC = `${BASE}projects/icon/`;
 
 export function ProjectAnimation({ slug }: Props) {
   switch (slug) {
@@ -45,85 +47,90 @@ export function ProjectAnimation({ slug }: Props) {
  *    underneath -- those are the real numbers behind corr = -0.866.
  * ──────────────────────────────────────────────────────────────────────── */
 function SstTracking() {
-  // panel geometry: 4 across, support pair is portrait, query pair landscape
-  const panels = [
-    { src: `${ST}p1_support.png`,      label: 'support',     x: 20  },
-    { src: `${ST}p2_support_mask.png`, label: 'its mask',    x: 132 },
-    { src: `${ST}p3_query.png`,        label: 'query',       x: 244 },
-    { src: `${ST}p4_prediction.png`,   label: 'propagated',  x: 356 }
-  ];
-
-  // real per-quartile mIoU from the displacement study (n = 500)
-  const quart = [
-    { band: '7.7-23.1 px',   miou: 82.8 },
-    { band: '23.1-40.5 px',  miou: 75.1 },
-    { band: '40.5-70.5 px',  miou: 73.0 },
-    { band: '70.5-464.6 px', miou: 50.8 }
-  ];
-  const bx = 150;
-  const bw = 250;
-  const scale = (m: number) => (m / 90) * bw;
+  // query / prediction / ground truth are all 421x353 of the same frame, so
+  // the prediction can be wiped straight over the photo -- the wipe IS the
+  // mask propagating, not a decorative transition.
+  const IX = 20, IY = 52, IW = 316, IH = 265;
 
   return (
     <div className="anim anim--sst anim--bench-tall" aria-hidden="true">
       <svg viewBox="0 0 480 360" role="img" aria-label="one-shot trait segmentation by tracking">
+        <defs>
+          {/* width is a CSS geometry property -- driving it off --local gives
+              a hard-edged wipe rather than a cross-fade */}
+          <clipPath id="sst-wipe">
+            <rect x={IX} y={IY} height={IH} className="sst-wipe-rect" style={v(0.22, 0.46)} />
+          </clipPath>
+        </defs>
+
         <text x="20" y="22" className="anim-title">one-shot trait segmentation · SAM 2/3</text>
         <text x="20" y="38" className="anim-sub">
-          two-frame pseudo-video · mask propagates support to query
+          support mask propagates across a two-frame pseudo-video
         </text>
 
-        {panels.map((p, i) => (
-          <g key={p.label} className="sst-panel" style={v(0.06 + i * 0.13, 0.30)}>
-            {/* meet, not slice -- the support pair is portrait (247x372) and
-                slice would crop the specimen's head off */}
+        {/* the query photograph, full size -- this is the subject */}
+        <g style={v(0.02, 0.16)} className="sst-hero">
+          <image
+            href={`${ST}p3_query.png`}
+            x={IX} y={IY} width={IW} height={IH}
+            preserveAspectRatio="xMidYMid slice"
+          />
+        </g>
+
+        {/* the propagated mask, wiped over it left to right */}
+        <g clipPath="url(#sst-wipe)">
+          <image
+            href={`${ST}p4_prediction.png`}
+            x={IX} y={IY} width={IW} height={IH}
+            preserveAspectRatio="xMidYMid slice"
+          />
+        </g>
+
+        {/* the moving seam, so the wipe reads as a comparison */}
+        <rect
+          x={IX} y={IY} width="1.5" height={IH}
+          className="sst-seam"
+          style={v(0.22, 0.46)}
+        />
+        <rect x={IX} y={IY} width={IW} height={IH} rx="2" className="sst-frame" />
+
+        {/* label chips rather than haloed text -- a background rect reads the
+            same everywhere and does not lean on paint-order support */}
+        <g className="sst-chip">
+          <rect x={IX + 6} y={IY + 6} width={40} height={14} rx="2" />
+          <text x={IX + 12} y={IY + 16}>query</text>
+        </g>
+        <g className="sst-chip sst-chip--pred" style={v(0.40, 0.14)}>
+          <rect x={IX + IW - 74} y={IY + 6} width={68} height={14} rx="2" />
+          <text x={IX + IW - 68} y={IY + 16}>propagated</text>
+        </g>
+
+        {/* the labeled support pair, small -- reference, not the subject */}
+        {[
+          { src: `${ST}p1_support.png`,      label: 'support',   y: 52 },
+          { src: `${ST}p2_support_mask.png`, label: 'its mask',  y: 188 }
+        ].map((t, i) => (
+          <g key={t.label} className="sst-ref" style={v(0.06 + i * 0.08, 0.22)}>
             <image
-              href={p.src}
-              x={p.x} y={54} width={104} height={104}
+              href={t.src}
+              x={348} y={t.y} width={112} height={112}
               preserveAspectRatio="xMidYMid meet"
             />
-            <rect x={p.x} y={54} width={104} height={104} className="sst-frame" />
-            <text x={p.x} y={170} className="sst-cap">{p.label}</text>
+            <rect x={348} y={t.y} width={112} height={112} className="sst-frame" />
+            <text x={348} y={t.y + 126} className="sst-cap">{t.label}</text>
           </g>
         ))}
 
-        {/* arrows tracing the direction the mask actually travels */}
-        {[124, 236, 348].map((x, i) => (
-          <text key={x} x={x} y={110} className="sst-arrow" style={v(0.14 + i * 0.13, 0.16)}>
-            &#8594;
-          </text>
-        ))}
-
-        <line x1={20} y1={188} x2={460} y2={188} className="bench-divider" style={v(0.52, 0.10)} />
-        <text x={20} y={206} className="anim-sub" style={v(0.54, 0.10)}>
-          mIoU by query displacement from the train median -- corr -0.866, n = 500
-        </text>
-
-        {/* paper's butterfly target. drawn before the bars so the dashed
-            rule passes under the value labels instead of through them */}
-        <g style={v(0.86, 0.12)}>
-          <line x1={bx + scale(81)} y1={216} x2={bx + scale(81)} y2={342} className="ax-ref" />
-          <text x={bx + scale(81) + 4} y={352} className="ax-tick">paper 81.0</text>
+        {/* one number, over the image, the way a product shot carries a stat */}
+        <g style={v(0.62, 0.18)} className="sst-stat">
+          <rect x={IX + 10} y={IY + IH - 46} width={150} height={36} rx="2" />
+          <text x={IX + 20} y={IY + IH - 28} className="sst-stat-val">69.88 mIoU</text>
+          <text x={IX + 20} y={IY + IH - 17} className="sst-stat-note">beetle 1-shot · +5.77 over SAM 2</text>
         </g>
 
-        {quart.map((q, i) => {
-          const cy = 228 + i * 27;
-          const len = scale(q.miou);
-          return (
-            <g key={q.band}>
-              <text x={20} y={cy + 4} className="sst-band">{q.band}</text>
-              <line x1={bx} y1={cy} x2={bx + bw} y2={cy} className="ax" />
-              <line
-                x1={bx} y1={cy} x2={bx + len} y2={cy}
-                className={`sst-bar${i === 3 ? ' sst-bar--drop' : ''}`}
-                style={{ ...v(0.60 + i * 0.07, 0.34), ['--len' as string]: len } as CSSProperties}
-              />
-              <text x={bx + len + 8} y={cy + 4} className="sst-val" style={v(0.74 + i * 0.05, 0.14)}>
-                {q.miou.toFixed(1)}
-              </text>
-            </g>
-          );
-        })}
-
+        <text x={20} y={340} className="anim-sub" style={v(0.80, 0.12)}>
+          butterfly splits fall to 50.8 at the far displacement quartile -- corr -0.866, n = 500
+        </text>
       </svg>
     </div>
   );
@@ -216,99 +223,85 @@ function ReasoningChannels() {
  *    TP case (right side of A44O) and stays diffuse across A8GE (TN).
  * ──────────────────────────────────────────────────────────────────────── */
 function PrameAttention() {
-  // 4x6 = 24 tile overlay, animated to fade in then out, revealing the
-  // actual heatmap PNG underneath. attention indices roughly mark the
-  // dense-tumor region in the TP slide.
+  // both panels grew to 222x214 -- the slides are the subject, so the
+  // chrome gives up its margins rather than the imagery. the tile grid no
+  // longer cross-fades; it wipes downward like a scan, revealing the real
+  // attention pattern underneath.
+  const P = [
+    { id: 'tp', src: `${PR}tp_a44o_thumb.png`, x: 14,  pill: 'PRAME+ · p=0.984', sid: 'TCGA-EB-A44O · fold 4', cls: 'prame-pill--pos' },
+    { id: 'tn', src: `${PR}tn_a8ge_thumb.png`, x: 244, pill: 'PRAME- · p=0.004', sid: 'TCGA-D3-A8GE · fold 1', cls: 'prame-pill--neg' }
+  ];
+  const IY = 44, IW = 222, IH = 214;
   const tiles = Array.from({ length: 24 });
-  // tiles that sit over the high-attention nest on the TP panel
+  // tiles sitting over the high-attention nest on the TP slide
   const att = new Set([10, 11, 16, 17]);
+
   return (
     <div className="anim anim--prame anim--large" aria-hidden="true">
       <svg viewBox="0 0 480 280" role="img" aria-label="WSI attention demo">
         <defs>
-          {/* faint inner-stroke around each slide panel so the white slide
-              background doesn't bleed into the dark canvas chrome */}
-          <clipPath id="prame-clip-tp">
-            <rect x="20" y="58" width="200" height="184" rx="3" />
-          </clipPath>
-          <clipPath id="prame-clip-tn">
-            <rect x="260" y="58" width="200" height="184" rx="3" />
+          {P.map((q) => (
+            <clipPath key={q.id} id={`prame-clip-${q.id}`}>
+              <rect x={q.x} y={IY} width={IW} height={IH} rx="2" />
+            </clipPath>
+          ))}
+          {/* the scan wipe -- height off --local, so the tile layer retracts
+              upward instead of fading out */}
+          <clipPath id="prame-scan">
+            <rect x="0" y={IY} width="480" className="prame-scan-rect" style={v(0.16, 0.40)} />
           </clipPath>
         </defs>
 
-        <text x="20" y="22" className="anim-title">held-out attention · UNI · TCGA-SKCM</text>
-        <text x="20" y="38" className="anim-sub">attention-MIL · 5-fold CV · confidence-gated routing</text>
+        <text x="14" y="20" className="anim-title">held-out attention · UNI · TCGA-SKCM</text>
+        <text x="14" y="34" className="anim-sub">attention-MIL · 5-fold CV · confidence-gated routing</text>
 
-        {/* TP slide -- the model lands on a focal tumor nest */}
-        <g className="prame-panel prame-panel--tp">
-          <image
-            href={`${PR}tp_a44o_thumb.png`}
-            x="20" y="58" width="200" height="184"
-            preserveAspectRatio="xMidYMid slice"
-            clipPath="url(#prame-clip-tp)"
-          />
-          <rect
-            x="20" y="58" width="200" height="184" rx="3"
-            className="prame-frame"
-          />
-        </g>
+        {P.map((q, i) => (
+          <g key={q.id} className="prame-panel" style={v(0.02 + i * 0.06, 0.18)}>
+            <image
+              href={q.src}
+              x={q.x} y={IY} width={IW} height={IH}
+              preserveAspectRatio="xMidYMid slice"
+            />
+            <rect x={q.x} y={IY} width={IW} height={IH} rx="2" className="prame-frame" />
+          </g>
+        ))}
 
-        {/* TN slide -- diffuse, no focal hot-spot */}
-        <g className="prame-panel prame-panel--tn">
-          <image
-            href={`${PR}tn_a8ge_thumb.png`}
-            x="260" y="58" width="200" height="184"
-            preserveAspectRatio="xMidYMid slice"
-            clipPath="url(#prame-clip-tn)"
-          />
-          <rect
-            x="260" y="58" width="200" height="184" rx="3"
-            className="prame-frame"
-          />
-        </g>
-
-        {/* abstract tile overlay -- fades in over the TP slide early, then
-            dissolves out to reveal the real attention pattern */}
+        {/* tile overlay over the TP slide, retracted by the scan wipe */}
         <g clipPath="url(#prame-clip-tp)">
-          {tiles.map((_, i) => {
-            const col = i % 6;
-            const row = Math.floor(i / 6);
-            const x = 20 + col * 34;
-            const y = 58 + row * 46;
-            const d = 0.04 + (i / 24) * 0.20;
-            return (
-              <rect
-                key={i}
-                x={x}
-                y={y}
-                width={32}
-                height={44}
-                className={`prame-tile-ov ${att.has(i) ? 'prame-tile-ov--att' : ''}`}
-                style={v(d, 0.25)}
-              />
-            );
-          })}
+          <g clipPath="url(#prame-scan)">
+            {tiles.map((_, i) => {
+              const col = i % 6;
+              const row = Math.floor(i / 6);
+              return (
+                <rect
+                  key={i}
+                  x={14 + col * 37}
+                  y={IY + row * 53.5}
+                  width={35}
+                  height={51.5}
+                  className={`prame-tile-ov ${att.has(i) ? 'prame-tile-ov--att' : ''}`}
+                  style={v(0.02 + (i / 24) * 0.14, 0.18)}
+                />
+              );
+            })}
+          </g>
         </g>
 
-        {/* terracotta accent ring marking the attended region on the TP panel */}
-        <circle
-          className="prame-bloom"
-          cx="155" cy="170" r="34"
-        />
+        {/* the seam of the scan, so the retraction reads as motion */}
+        <rect x="14" y={IY} width={IW} height="1.5" className="prame-scan-seam" style={v(0.16, 0.40)} />
 
-        {/* confidence pills */}
-        <g className="prame-pill prame-pill--pos">
-          <rect x="22" y="60" width="92" height="20" rx="3" />
-          <text x="68" y="74" textAnchor="middle">PRAME+ · p=0.984</text>
-        </g>
-        <g className="prame-pill prame-pill--neg">
-          <rect x="262" y="60" width="92" height="20" rx="3" />
-          <text x="308" y="74" textAnchor="middle">PRAME- · p=0.004</text>
-        </g>
+        <circle className="prame-bloom" cx="150" cy="162" r="36" />
 
-        {/* slide IDs along the bottom edge */}
-        <text x="20" y="260" className="prame-sid">TCGA-EB-A44O · fold 4</text>
-        <text x="260" y="260" className="prame-sid">TCGA-D3-A8GE · fold 1</text>
+        {P.map((q) => (
+          <g key={q.id} className={`prame-pill ${q.cls}`}>
+            <rect x={q.x + 8} y={IY + 8} width={96} height={19} rx="2" />
+            <text x={q.x + 56} y={IY + 21} textAnchor="middle">{q.pill}</text>
+          </g>
+        ))}
+
+        {P.map((q) => (
+          <text key={q.id} x={q.x} y={272} className="prame-sid">{q.sid}</text>
+        ))}
       </svg>
     </div>
   );
@@ -318,35 +311,69 @@ function PrameAttention() {
  * 2. Package tracking — wider canvas, longer rail.
  * ──────────────────────────────────────────────────────────────────────── */
 function PackageTrack() {
-  const stations: Array<{ x: number; d: number; label: string }> = [
-    { x:  40, d: 0.10, label: 'ordered' },
-    { x: 180, d: 0.35, label: 'shipped' },
-    { x: 300, d: 0.60, label: 'in transit' },
-    { x: 440, d: 0.85, label: 'delivered' }
+  // real gold-label coverage over the 500-record harvested set. the email
+  // bodies are Hunter's own inbox and stay out of the repo and off this
+  // page -- only the aggregate ships.
+  //
+  // three fixed columns: label, bar, value. the track rule stops where the
+  // value column starts, so a number never lands on top of a line.
+  const fields = [
+    { name: 'is_shipping_email', n: 500 },
+    { name: 'status',            n: 122 },
+    { name: 'vendor',            n: 120 },
+    { name: 'products',          n: 104 },
+    { name: 'carrier',           n: 88  },
+    { name: 'delivery_estimate', n: 78  },
+    { name: 'order_id',          n: 73  },
+    { name: 'tracking_number',   n: 67  }
   ];
-  return (
-    <div className="anim anim--track anim--large" aria-hidden="true">
-      <svg viewBox="0 0 480 280" role="img" aria-label="shipment progress demo">
-        <text x="20" y="22" className="anim-title">tracking pipeline</text>
-        <text x="20" y="38" className="anim-sub">extension → SQLite → 17Track → Calendar</text>
+  const LX = 20;         // label column
+  const BX = 152;        // bar column starts
+  const BW = 244;        // bar column width
+  const VX = 460;        // value column, right-aligned -- never overlapped
+  const N = 500;
+  const len = (n: number) => (n / N) * BW;
+  const row = (i: number) => 84 + i * 29;
 
-        <line x1="40" y1="160" x2="440" y2="160" className="track-rail" />
-        <line x1="40" y1="160" x2="440" y2="160" className="track-fill track-fill--long" />
-        {stations.map((s) => (
-          <g key={s.x} className="track-station" style={v(s.d, 0.08)}>
-            <circle cx={s.x} cy="160" r="9" />
-          </g>
-        ))}
-        <g className="track-pkg track-pkg--long">
-          <rect x="-14" y="-14" width="28" height="28" rx="3" />
-          <line x1="-14" y1="0" x2="14" y2="0" />
-          <line x1="0" y1="-14" x2="0" y2="14" />
-        </g>
-        <g className="track-labels">
-          {stations.map((s) => (
-            <text key={s.label} x={s.x} y="200" textAnchor="middle">{s.label}</text>
-          ))}
-        </g>
+  return (
+    <div className="anim anim--track anim--bench-tall" aria-hidden="true">
+      <svg viewBox="0 0 480 360" role="img" aria-label="gold-label field coverage">
+        <text x={LX} y="24" className="anim-title">field extraction · gold coverage</text>
+        <text x={LX} y="40" className="anim-sub">
+          500 harvested emails · 112 human-adjudicated
+        </text>
+
+        {/* column rule + scale, so the bars read against something */}
+        <line x1={BX} y1={58} x2={BX + BW} y2={58} className="trk-axis" style={v(0.04, 0.10)} />
+        <text x={BX} y={52} className="trk-scale" style={v(0.04, 0.10)}>0</text>
+        <text x={BX + BW} y={52} textAnchor="end" className="trk-scale" style={v(0.04, 0.10)}>500</text>
+
+        {fields.map((f, i) => {
+          const cy = row(i);
+          const l = len(f.n);
+          return (
+            <g key={f.name}>
+              <text x={LX} y={cy + 3.5} className="trk-label">{f.name}</text>
+              {/* track stops at the bar column edge, well clear of the value */}
+              <line x1={BX} y1={cy} x2={BX + BW} y2={cy} className="trk-track" />
+              <line
+                x1={BX} y1={cy} x2={BX + l} y2={cy}
+                className={`trk-bar${i === 0 ? ' trk-bar--all' : ''}`}
+                style={{ ...v(0.10 + i * 0.055, 0.32), ['--len' as string]: l } as CSSProperties}
+              />
+              <text x={VX} y={cy + 3.5} textAnchor="end" className="trk-val"
+                    style={v(0.22 + i * 0.05, 0.14)}>{f.n}</text>
+            </g>
+          );
+        })}
+
+        <line x1={LX} y1={322} x2={VX} y2={322} className="bench-divider" style={v(0.70, 0.10)} />
+        <text x={LX} y={338} className="trk-note" style={v(0.72, 0.12)}>
+          every field must be a verbatim substring of the source,
+        </text>
+        <text x={LX} y={350} className="trk-note" style={v(0.76, 0.12)}>
+          so a hallucinating model can only return null · scored by 5-fold CV
+        </text>
       </svg>
     </div>
   );
@@ -356,40 +383,137 @@ function PackageTrack() {
  * 3. Iconograph — bigger grid + source label.
  * ──────────────────────────────────────────────────────────────────────── */
 function Iconograph() {
-  const HB = new Set([
-    0, 6, 12, 18, 24, 30,
-    13, 14, 15, 16,
-    2, 8, 20, 26, 32,
-    4, 5, 10, 11, 17, 22, 23, 28, 29, 34, 35
-  ]);
-  const cells = Array.from({ length: 36 });
-  return (
-    <div className="anim anim--icon anim--large" aria-hidden="true">
-      <svg viewBox="0 0 480 280" role="img" aria-label="logo decomposition demo">
-        <text x="20" y="22" className="anim-title">six-stage decomposition</text>
-        <text x="20" y="38" className="anim-sub">smooth → pixel quantize → monogram</text>
+  // nine real frames out of testbed/story/figma.png on one shared crop, so
+  // the logo sits in the same place in every stage.
+  //
+  // the D1 beat does NOT fade. the parse walks the boundary, so the overlay
+  // walks it too -- run by run, in contour order, coloured by the type the
+  // parser assigned. geometry in iconContour.json is the output of his own
+  // contour_parse.parse_shape() on testbed/align/figma.png: 16 runs, 19
+  // corners, no holes. not a redraw of the debug png.
+  const stages = [
+    { f: 's0_source',    tag: '0  source',             say: 'raw logo PNG, alpha composited over white' },
+    { f: 's1_align',     tag: '1  categorize + align', say: 'sub-case detect, canvas trim, axis-align (L0)' },
+    { f: 's2_classify',  tag: '3a L1 classify',        say: '8-connected components; fit ONE primitive each' },
+    { f: 's3_features',  tag: '3b L2 features',        say: 'misses split into typed features; rings polar-unrolled' },
+    { f: 's4_contour',   tag: '3c D1 contour-parse',   say: 'approxPolyDP, then split runs on sagitta ratio' },
+    { f: 's5_csg',       tag: '3d D2/D3 CSG',          say: 'convex arc ADDs, concave arc SUBTRACTs' },
+    { f: 's6_render24',  tag: '3e render R1 @24',      say: 'idealize onto the hicolor grid; cubify at T<=24' },
+    { f: 's7_refine24',  tag: '4  refine @24',         say: '1-px perimeter: connect disjoint, normalize stroke' },
+    { f: 's8_connect32', tag: '5  connect @32',        say: 'MST bridges open the T-joins into one stroke' }
+  ];
+  const TRACE = 4;   // the D1 stage index -- the one that gets the walk
 
-        <circle cx="120" cy="160" r="80" className="icon-source" />
-        <g className="icon-grid icon-grid--large" transform="translate(240 80)">
-          {cells.map((_, i) => {
-            const col = i % 6;
-            const row = Math.floor(i / 6);
-            const inHB = HB.has(i);
-            const d = 0.45 + (i / 36) * 0.25;
-            return (
-              <rect
-                key={i}
-                x={col * 28}
-                y={row * 28}
-                width={24}
-                height={24}
-                rx={1}
-                className={`icon-cell ${inHB ? 'icon-cell--mono' : 'icon-cell--abs'}`}
-                style={v(d, 0.2)}
-              />
-            );
-          })}
+  const START = 0.05, SLOT = 0.094, RAMP = 0.042;
+  const at = (i: number) => START + i * SLOT;
+  const win = (i: number): CSSProperties => {
+    const o: Record<string, string | number> = { '--d': at(i), '--span': RAMP };
+    if (i < stages.length - 1) { o['--d2'] = at(i + 1); o['--span2'] = RAMP; }
+    return o as CSSProperties;
+  };
+
+  // frame aspect == the crop aspect (271x236), so preserveAspectRatio=meet
+  // fits exactly and the parsed geometry registers pixel-for-pixel. get this
+  // wrong and the trace floats off the silhouette.
+  const IX = 20, IY = 62, IW = 262, IH = 228;
+  // parse coords are fractions of that same crop
+  const px = (u: number) => IX + u * IW;
+  const py = (u: number) => IY + u * IH;
+
+  const runs = contour.runs as { kind: string; convex: boolean; pts: number[][] }[];
+  const corners = contour.corners as { kind: string; convex: boolean; p: number[] }[];
+  const runCls = (r: { kind: string; convex: boolean }) =>
+    r.kind === 'straight' ? 'd1-straight' : r.convex ? 'd1-add' : 'd1-sub';
+
+  // the walk occupies the D1 slot; each run gets an equal share of it
+  const walkStart = at(TRACE) + RAMP * 0.6;
+  const walkSpan = SLOT * 0.92;
+  const runWin = (i: number): CSSProperties =>
+    ({ '--d': walkStart + (i / runs.length) * walkSpan,
+       '--span': (walkSpan / runs.length) * 1.25 } as CSSProperties);
+
+  const c = contour.counts as Record<string, number>;
+  const tree = [
+    { q: 'max chord dev  >  0.12 · chord ?', yes: 'arc', no: 'straight', n: `${c.straight} straight` },
+    { q: 'signed area of run+chord  >  0 ?', yes: 'convex', no: 'concave', n: `${c.arc_convex} convex` },
+    { q: 'circle rmse  <=  tol ?',           yes: 'Kasa LSQ circle', no: 'bbox ellipse', n: 'circle-first' }
+  ];
+
+  return (
+    <div className="anim anim--icon anim--bench-tall" aria-hidden="true">
+      <svg viewBox="0 0 480 360" role="img" aria-label="deterministic icon pipeline, stage by stage">
+        <text x="20" y="22" className="anim-title">logo &#8594; icon + monogram · 9 stages</text>
+        <text x="20" y="38" className="anim-sub">figma · byte-identical on re-run</text>
+
+        {stages.map((st, i) => (
+          <g key={st.f} className="icon-frame" style={{ '--d': at(i), '--span': RAMP } as CSSProperties}>
+            <image href={`${IC}${st.f}.png`} x={IX} y={IY} width={IW} height={IH}
+                   preserveAspectRatio="xMidYMid meet" />
+          </g>
+        ))}
+
+        {/* the walk. pathLength=1 normalises every run so one dashoffset rule
+            drives all of them regardless of real arc length. */}
+        <g className="d1-walk" style={win(TRACE)}>
+          {runs.map((r, i) => (
+            <polyline
+              key={i}
+              className={`d1-run ${runCls(r)}`}
+              pathLength={1}
+              style={runWin(i)}
+              points={r.pts.map((u) => `${px(u[0]).toFixed(1)},${py(u[1]).toFixed(1)}`).join(' ')}
+            />
+          ))}
+          {corners.map((k, i) => (
+            <circle
+              key={i}
+              className={`d1-corner ${k.convex ? 'd1-peak' : 'd1-valley'}`}
+              cx={px(k.p[0])} cy={py(k.p[1])} r={2.4}
+              style={runWin(Math.min(runs.length - 1, Math.floor((i / corners.length) * runs.length)))}
+            />
+          ))}
         </g>
+        <rect x={IX} y={IY} width={IW} height={IH} rx="2" className="sst-frame" />
+
+        {/* stage rail */}
+        {stages.map((st, i) => (
+          <g key={st.tag}>
+            <line x1={296} y1={62 + i * 20} x2={303} y2={62 + i * 20} className="icon-tick" style={win(i)} />
+            <text x={308} y={65 + i * 20} className="icon-stage" style={win(i)}>{st.tag}</text>
+          </g>
+        ))}
+        <line x1={299.5} y1={54} x2={299.5} y2={250} className="icon-spine" />
+
+        {/* the routing itself, lit through the D1/CSG window */}
+        <g className="d1-tree" style={{ '--d': at(TRACE) - 0.01, '--span': RAMP,
+                                        '--d2': at(TRACE + 2), '--span2': RAMP } as CSSProperties}>
+          <text x={296} y={262} className="icon-stage d1-tree-h">per-run routing</text>
+          {tree.map((t, i) => (
+            <g key={t.q}>
+              <text x={296} y={276 + i * 26} className="d1-q">{t.q}</text>
+              <text x={302} y={286 + i * 26} className="d1-yes">Y &#8594; {t.yes}</text>
+              <text x={372} y={286 + i * 26} className="d1-no">N &#8594; {t.no}</text>
+            </g>
+          ))}
+        </g>
+
+        {/* legend, straight out of contour_parse's own debug palette */}
+        <g className="d1-legend" style={win(TRACE)}>
+          {[['d1-straight', `straight ${c.straight}`], ['d1-add', `convex arc ${c.arc_convex}`],
+            ['d1-sub', `concave arc ${c.arc_concave}`]].map(([cls, label], i) => (
+            <g key={cls}>
+              <line x1={22 + i * 88} y1={324} x2={38 + i * 88} y2={324} className={`d1-run ${cls} d1-swatch`} />
+              <text x={42 + i * 88} y={327} className="icon-say d1-legend-t">{label}</text>
+            </g>
+          ))}
+        </g>
+
+        {stages.map((st, i) => (
+          <text key={st.say} x={20} y={344} className="icon-say" style={win(i)}>{st.say}</text>
+        ))}
+        <text x={20} y={356} className="anim-sub" style={{ '--d': 0.84, '--span': 0.1 } as CSSProperties}>
+          0.963 mean area fidelity · 30 fixtures · 0 blot defects across 60 cells
+        </text>
       </svg>
     </div>
   );

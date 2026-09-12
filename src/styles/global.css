@@ -298,15 +298,24 @@ p { margin: 0 0 var(--sp-4) 0; }
 .status-badge--done { color: var(--olive); }
 .status-badge--wip  { color: var(--terracotta); }
 
+/* the viz is the cover: it pins while the prose scrolls past, so the
+   scrubbed transition plays IN PLACE instead of sliding off the top of the
+   viewport while you are still reading. two columns, media-dominant --
+   ~55% of the card, which is wide enough for a wipe to actually travel
+   (the original 360px sidebar was not). */
 .entry-body {
   margin-top: var(--sp-5);
   margin-left: calc(2.6ch + var(--sp-4));
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 1.05fr);
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: var(--sp-6);
   align-items: start;
 }
 .entry-viz {
+  order: -1;                 /* media first, prose to its right */
+  position: sticky;
+  top: var(--sp-6);
+  align-self: start;
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
@@ -397,6 +406,8 @@ p { margin: 0 0 var(--sp-4) 0; }
     grid-template-columns: 1fr;
     margin-left: 0;
   }
+  /* stacked, sticky would pin the cover on top of the text under it */
+  .entry-viz { position: static; }
   .entry-role { margin-left: 0; }
   .entry-head { grid-template-columns: auto 1fr auto; }
   .entry-head .entry-when { display: none; }

@@ -19,6 +19,21 @@
 /* per-child --local progress under .anim */
 .anim * { --local: clamp(0, calc((var(--progress, 0) - var(--d, 0)) / var(--span, 1)), 1); }
 
+/* --eased is --local through an ease-out cubic, 1-(1-t)^3. the award-site
+   convention is ease-out dominant (cubic-bezier .22 .61 .36 1 and friends):
+   fast off the mark, long settle. a linear scrub reads mechanical because
+   nothing decelerates. custom props cannot take a cubic-bezier, so the
+   polynomial stands in -- it tracks that curve closely enough. */
+.anim * {
+  --inv: calc(1 - var(--local));
+  --eased: calc(1 - var(--inv) * var(--inv) * var(--inv));
+  /* a SECOND window, for elements that must fade out again when their
+     successor takes over. --d2 defaults far past the end, so anything that
+     does not set it just stays on once lit. */
+  --local2: clamp(0, calc((var(--progress, 0) - var(--d2, 99)) / var(--span2, 1)), 1);
+  --held: calc(var(--local) * (1 - var(--local2)));
+}
+
 /* section titles inside an anim canvas */
 .anim-title {
   font-family: var(--font-mono);
@@ -330,10 +345,7 @@
    displacement quartile bars. panels slide in along the direction the
    mask actually propagates (support -> query), so the motion carries
    the method rather than just decorating it. */
-.sst-panel {
-  opacity: var(--local);
-  transform: translateX(calc((1 - var(--local)) * -6px));
-}
+
 .sst-panel image { image-rendering: auto; }
 .sst-frame {
   fill: none;
@@ -346,32 +358,12 @@
   fill: var(--fg-dim);
   letter-spacing: 0.04em;
 }
-.sst-arrow {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  fill: var(--fg-faint);
-  opacity: var(--local);
-}
-.sst-band {
-  font-family: var(--font-mono);
-  font-size: 8px;
-  fill: var(--fg-muted);
-}
-.sst-bar {
-  stroke: var(--sage);
-  stroke-width: 7;
-  stroke-linecap: butt;
-  stroke-dasharray: 400;
-  stroke-dashoffset: calc(400 - var(--local) * var(--len, 200));
-}
+
+
+
 /* the bottom quartile is the finding, not a footnote -- amber marks it */
-.sst-bar--drop { stroke: var(--amber); }
-.sst-val {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  fill: var(--fg);
-  opacity: var(--local);
-}
+
+
 
 /* reasoning topologies -- channel split redrawn from channels.svg */
 .topo-box {
@@ -435,3 +427,192 @@
   fill: var(--amber);
   opacity: var(--local);
 }
+
+/* sst -- photo-first. the query photograph is the subject and the
+   propagated mask wipes across it; the wipe is the method, not a
+   flourish. width on the clip rect is an SVG2 geometry property, so it
+   takes a calc off --local and gives a hard seam instead of a fade. */
+.sst-wipe-rect { width: calc(var(--eased) * 316px); }
+.sst-hero { opacity: var(--local); }
+/* counter-scale: the photo enters slightly overscaled and settles to 1 as
+   the wipe opens, so the image has push instead of sitting inert behind a
+   moving edge. lifted from the scale ladders on the yacht/studio sites. */
+.sst-hero image {
+  filter: saturate(0.9);
+  transform-origin: 178px 184px;
+  transform: scale(calc(1.06 - var(--eased) * 0.06));
+}
+.sst-seam {
+  fill: var(--amber);
+  transform: translateX(calc(var(--eased) * 316px));
+  opacity: calc(var(--eased) * (1 - var(--eased)) * 4);
+}
+.sst-frame { fill: none; stroke: var(--fg-faint); stroke-width: 1; }
+.sst-ref {
+  opacity: var(--local);
+  transform: translateX(calc((1 - var(--eased)) * 8px));
+}
+.sst-cap {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: var(--fg-dim);
+  letter-spacing: 0.04em;
+}
+.sst-chip rect { fill: var(--bg-deep); opacity: 0.82; }
+.sst-chip text {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  fill: var(--fg);
+  letter-spacing: 0.04em;
+}
+.sst-chip--pred { opacity: var(--local); }
+.sst-chip--pred rect { fill: var(--amber); opacity: 0.9; }
+.sst-chip--pred text { fill: var(--bg-deep); }
+
+.sst-stat rect {
+  fill: var(--bg-deep);
+  stroke: var(--amber);
+  stroke-width: 1;
+  opacity: calc(var(--local) * 0.92);
+}
+.sst-stat-val {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  fill: var(--amber);
+  opacity: var(--local);
+}
+.sst-stat-note {
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  fill: var(--fg-muted);
+  opacity: var(--local);
+}
+
+/* prame scan wipe -- height is an SVG2 geometry property, so the tile
+   layer can retract off --local instead of cross-fading */
+/* y and height both ride --local so the tile layer clears top-down like a
+   scan, rather than dropping away as a rising curtain */
+.prame-scan-rect {
+  y: calc(44px + var(--eased) * 214px);
+  height: calc((1 - var(--eased)) * 214px);
+}
+.prame-scan-seam {
+  fill: var(--amber);
+  transform: translateY(calc(var(--eased) * 214px));
+  opacity: calc(var(--eased) * (1 - var(--eased)) * 4);
+}
+
+/* prame slides get the same settle as the sst hero */
+.prame-panel image {
+  transform-origin: center;
+  transform: scale(calc(1.05 - var(--eased) * 0.05));
+}
+
+/* iconograph -- the pipeline transforms rather than overlays, so source and
+   output dissolve with a slight settle instead of meeting at a seam */
+
+
+
+
+/* delivery tracker -- gold coverage bars off the labeled set */
+
+
+
+/* iconograph stage-stepper. frames only fade in -- stacking order does the
+   rest. the crossfade is short so each stage holds, which is what makes it
+   read as discrete deterministic steps rather than a morph. */
+.icon-frame { opacity: var(--eased); }
+.icon-tick {
+  stroke: var(--amber);
+  stroke-width: 2;
+  opacity: var(--held);
+}
+.icon-stage {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  fill: var(--fg-dim);
+  letter-spacing: 0.03em;
+  /* stages already passed stay faintly legible, so the rail reads as a
+     whole pipeline instead of one lit row in the dark */
+  opacity: calc(0.34 + var(--held) * 0.66);
+}
+.icon-spine { stroke: var(--fg-faint); stroke-width: 0.5; }
+.icon-say {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  fill: var(--fg-muted);
+  opacity: var(--held);
+}
+
+/* D1 walk. the parser traverses the boundary run by run, so the overlay
+   does too -- pathLength=1 normalises every run to the same nominal
+   length, so one dashoffset rule draws a 4px straight and a long arc at
+   the same rate. colours are contour_parse's own debug palette. */
+.d1-walk { opacity: var(--held); }
+.d1-run {
+  fill: none;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: calc(1 - var(--eased));
+}
+.d1-straight { stroke: #4363d8; }   /* straight run          */
+.d1-add      { stroke: #e6194b; }   /* convex arc -> ADD     */
+.d1-sub      { stroke: #911eb4; }   /* concave arc -> SUBTRACT */
+.d1-swatch { stroke-dashoffset: 0; stroke-width: 3; }
+.d1-corner { opacity: var(--eased); }
+.d1-peak   { fill: #3cb44b; }       /* convex corner  */
+.d1-valley { fill: #42d4f4; }       /* concave corner */
+
+.d1-tree { opacity: var(--held); }
+.d1-tree-h { opacity: 1; fill: var(--fg); }
+.d1-q {
+  font-family: var(--font-mono);
+  font-size: 7px;
+  fill: var(--fg-muted);
+}
+.d1-yes { font-family: var(--font-mono); font-size: 7px; fill: var(--sage); }
+.d1-no  { font-family: var(--font-mono); font-size: 7px; fill: var(--fg-dim); }
+.d1-legend { opacity: var(--held); }
+.d1-legend-t { opacity: 1; font-size: 7.5px; }
+
+/* delivery tracker coverage chart. three fixed columns -- label / bar /
+   value -- so nothing can collide. the earlier version ran the track rule
+   the full width and right-aligned each value just past its own bar, which
+   put short rows' numbers directly on top of the rule. */
+.trk-label {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  /* --fg, not --fg-muted: these labels are the content, and muted sat at
+     the bottom of the readable range on --bg-deep in dark mode */
+  fill: var(--fg);
+}
+.trk-val {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  fill: var(--amber-hi);
+  opacity: var(--eased);
+}
+.trk-track { stroke: var(--fg-faint); stroke-width: 1; }
+.trk-axis  { stroke: var(--fg-faint); stroke-width: 1; }
+.trk-scale {
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  fill: var(--fg-dim);
+  opacity: var(--eased);
+}
+.trk-note {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  fill: var(--fg-muted);
+  opacity: var(--eased);
+}
+.trk-bar {
+  stroke: var(--sage);
+  stroke-width: 8;
+  stroke-linecap: butt;
+  stroke-dasharray: 400;
+  stroke-dashoffset: calc(400 - var(--eased) * var(--len, 200));
+}
+.trk-bar--all { stroke: var(--amber); }
