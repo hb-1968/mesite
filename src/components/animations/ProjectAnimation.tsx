@@ -404,7 +404,9 @@ function Iconograph() {
   ];
   const TRACE = 4;   // the D1 stage index -- the one that gets the walk
 
-  const START = 0.05, SLOT = 0.094, RAMP = 0.042;
+  // 9 stages across nearly the whole sweep. with data-progress-scale=2.4 on
+  // the card, one SLOT is roughly a third of a viewport of scroll.
+  const START = 0.04, SLOT = 0.115, RAMP = 0.055;
   const at = (i: number) => START + i * SLOT;
   const win = (i: number): CSSProperties => {
     const o: Record<string, string | number> = { '--d': at(i), '--span': RAMP };

@@ -138,12 +138,23 @@ export function useScrollProgress(routeKey?: string | number) {
     const updateAll = () => {
       raf = 0;
       const vh = window.innerHeight;
-      const vpCenter = vh / 2;
       for (const card of els) {
         const rect = card.getBoundingClientRect();
-        const elCenter = rect.top + rect.height / 2;
-        const distance = Math.abs(elCenter - vpCenter);
-        const p = Math.max(0, Math.min(1, 1 - distance / vh));
+        // TRANSIT progress, not distance-from-centre. 0 when the card's top
+        // sits at the viewport bottom, 1 once its bottom clears the top --
+        // so it runs 0 -> 1 exactly once, monotonically, over the card's
+        // whole passage.
+        //
+        // the old centre-distance form peaked at the midpoint and fell away
+        // again, which meant (a) the anim rewound on the way out, and (b) a
+        // card SHORTER than the viewport entered already part-played: at
+        // 1 - dist/vh a 700px card in a 900px window appears at p≈0.11 and a
+        // scale of 2.5 would have put it at p≈0.6, skipping most stages
+        // before you ever saw it. duration is bounded by transit distance,
+        // so it is set by card height (see --hold in global.css), not by a
+        // multiplier here.
+        const travel = vh + rect.height;
+        const p = Math.max(0, Math.min(1, (vh - rect.top) / travel));
         card.style.setProperty('--progress', p.toFixed(4));
 
         const cp = counterRamp(p);

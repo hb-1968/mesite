@@ -4,6 +4,14 @@ import { PromptHeading } from './PromptHeading';
 import { ProjectAnimation } from './animations/ProjectAnimation';
 import { parseRoute } from '../hooks/useRoute';
 
+// how much scroll a card occupies, which IS its animation duration now
+// that progress is transit-based. 'long' = ~2.4x the old sweep; 'epic' is
+// for the 9-stage pipeline, which needs roughly double that again.
+// see .boxed--project[data-hold] in global.css.
+const HOLD: Record<string, string | undefined> = {
+  iconograph: 'epic'
+};
+
 const TAG_CLASS: Record<string, string> = {
   research: 'chip accent',
   systems: 'chip warm',
@@ -146,6 +154,7 @@ function ProjectEntry({
       id={p.slug}
       className="boxed boxed--project boxed--entry reveal"
       data-progress
+      data-hold={HOLD[p.slug] ?? 'long'}
       data-title={`./projects/${p.slug}.md`}
       data-foot={`${String(index).padStart(2, '0')} · ${p.tags[0]}`}
     >

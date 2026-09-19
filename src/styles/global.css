@@ -309,16 +309,20 @@ p { margin: 0 0 var(--sp-4) 0; }
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
   gap: var(--sp-6);
-  align-items: start;
+  /* NOT align-items:start. a grid item shrunk to its content height gives a
+     sticky child zero travel, so the cover would never actually pin. the
+     column has to stretch to the row for sticky to have somewhere to go. */
+  align-items: stretch;
 }
 .entry-viz {
   order: -1;                 /* media first, prose to its right */
+  display: block;
+}
+.entry-viz > * { margin-bottom: var(--sp-4); }
+/* the cover itself is what pins, inside the stretched column */
+.entry-viz .anim {
   position: sticky;
   top: var(--sp-6);
-  align-self: start;
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-4);
 }
 .entry-highlight {
   border-left: 1px solid var(--fg-faint);
@@ -407,7 +411,7 @@ p { margin: 0 0 var(--sp-4) 0; }
     margin-left: 0;
   }
   /* stacked, sticky would pin the cover on top of the text under it */
-  .entry-viz { position: static; }
+  .entry-viz .anim { position: static; }
   .entry-role { margin-left: 0; }
   .entry-head { grid-template-columns: auto 1fr auto; }
   .entry-head .entry-when { display: none; }
@@ -5219,3 +5223,32 @@ html.hole-exit-white-in::before {
 .hole2-stage[data-perf="low"] .hole2-arena__box { filter: none; }
 .hole2-stage[data-perf="low"] .boss { filter: none; }
 .hole2-stage[data-perf="low"] .boss[data-hit="true"] { filter: none; }
+
+
+/* Animation duration is transit distance. progress now runs 0 -> 1 across a
+   card's whole passage (vh + card height), so a taller card literally means
+   a slower scrub -- there is no multiplier that can do this, because the
+   sweep is bounded by how much scroll the card occupies.
+
+   default card ~= vh tall  -> travel 2.0vh
+   [data-hold=long]         -> travel ~2.4vh   (~2.4x the old 1.0vh sweep)
+   [data-hold=epic]         -> travel ~4.6vh   (the 9-stage pipeline)
+
+   the sticky cover is what makes this readable rather than tedious: the viz
+   pins while the prose scrolls, so the extra height is reading room, not
+   dead space. */
+.boxed--project { min-height: 120vh; }
+.boxed--project[data-hold='long'] { min-height: 140vh; }
+.boxed--project[data-hold='epic'] { min-height: 360vh; }
+
+@media (max-width: 880px) {
+  /* stacked and unpinned, a tall card is just a long gap */
+  .boxed--project,
+  .boxed--project[data-hold='long'],
+  .boxed--project[data-hold='epic'] { min-height: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .boxed--project,
+  .boxed--project[data-hold='long'],
+  .boxed--project[data-hold='epic'] { min-height: 0; }
+}
