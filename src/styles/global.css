@@ -318,11 +318,18 @@ p { margin: 0 0 var(--sp-4) 0; }
   order: -1;                 /* media first, prose to its right */
   display: block;
 }
-.entry-viz > * { margin-bottom: var(--sp-4); }
-/* the cover itself is what pins, inside the stretched column */
-.entry-viz .anim {
+/* the pinned unit. sticky cannot live on .entry-viz itself: that is the
+   grid item, it stretches to the row, and an element as tall as its
+   containing block has nowhere to stick. so the item stretches and this
+   inner wrapper is what travels. */
+.entry-viz__pin {
   position: sticky;
   top: var(--sp-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  /* above the prose column while pinned */
+  z-index: 1;
 }
 .entry-highlight {
   border-left: 1px solid var(--fg-faint);
@@ -411,7 +418,7 @@ p { margin: 0 0 var(--sp-4) 0; }
     margin-left: 0;
   }
   /* stacked, sticky would pin the cover on top of the text under it */
-  .entry-viz .anim { position: static; }
+  .entry-viz__pin { position: static; }
   .entry-role { margin-left: 0; }
   .entry-head { grid-template-columns: auto 1fr auto; }
   .entry-head .entry-when { display: none; }
@@ -5237,7 +5244,16 @@ html.hole-exit-white-in::before {
    the sticky cover is what makes this readable rather than tedious: the viz
    pins while the prose scrolls, so the extra height is reading room, not
    dead space. */
-.boxed--project { min-height: 120vh; }
+.boxed--project {
+  min-height: 120vh;
+  /* min-height alone makes the BOX tall but leaves .entry-body at content
+     height, so the sticky cover had a few hundred px of travel and then
+     ~340vh of empty card underneath. flex + flex:1 pushes the grid to the
+     full card height, which is what the sticky element travels through. */
+  display: flex;
+  flex-direction: column;
+}
+.entry-body { flex: 1 1 auto; }
 .boxed--project[data-hold='long'] { min-height: 140vh; }
 .boxed--project[data-hold='epic'] { min-height: 360vh; }
 

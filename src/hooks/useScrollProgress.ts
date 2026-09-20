@@ -153,8 +153,21 @@ export function useScrollProgress(routeKey?: string | number) {
         // before you ever saw it. duration is bounded by transit distance,
         // so it is set by card height (see --hold in global.css), not by a
         // multiplier here.
-        const travel = vh + rect.height;
-        const p = Math.max(0, Math.min(1, (vh - rect.top) / travel));
+        // For a card TALLER than the viewport, scrub across the pinned
+        // window: 0 the moment its top reaches the viewport top (when the
+        // sticky cover starts pinning), 1 when its bottom reaches the
+        // viewport bottom (when the cover is about to release). That way the
+        // whole 0..1 range plays while the cover is actually on screen.
+        //
+        // The plain transit form spends progress off-screen: on a 360vh card
+        // the cover only occupies p in roughly [0.22, 0.86], so the first two
+        // pipeline stages fired before it scrolled into view and the last one
+        // after it left. Short cards keep the transit form, which has no
+        // pinned window to speak of.
+        const pinned = rect.height - vh;
+        const p = pinned > 0
+          ? Math.max(0, Math.min(1, -rect.top / pinned))
+          : Math.max(0, Math.min(1, (vh - rect.top) / (vh + rect.height)));
         card.style.setProperty('--progress', p.toFixed(4));
 
         const cp = counterRamp(p);

@@ -8,12 +8,10 @@ export type Project = {
   blurb: string;
   details: string[];
   stack: string[];
-  tags: ('research' | 'systems' | 'tooling' | 'coursework')[];
+  tags: ('research' | 'systems' | 'tooling')[];
   status: ProjectStatus;
-  // a single headline number (cases, AUC, etc.). xor with `heuristics`
+  // a single headline number (cases, AUC, etc.)
   highlight?: { label: string; value: string };
-  // short list of takeaways for coursework -- used when no number fits
-  heuristics?: string[];
   links?: { label: string; href: string }[];
 };
 
@@ -87,48 +85,6 @@ export const projects: Project[] = [
     stack: ['PyTorch', 'UNI', 'sklearn', 'pandas'],
     tags: ['research'],
     highlight: { label: 'AUC · UNI', value: '0.917' }
-  },
-  {
-    slug: 'gmm-rp',
-    name: 'EM for GMM + Random Projections',
-    when: 'Spring 2026',
-    role: 'CS365 Foundations of Data Science · coursework',
-    status: 'done',
-    blurb:
-      'EM for Gaussian mixtures, written from scratch and run across three synthetic 3-component datasets -- plus a Johnson-Lindenstrauss study where I randomly project 2D points down to 1D and ask whether 3NN still works (spoiler: it does not).',
-    details: [
-      'Three datasets, 10 EM runs each. Well-separated mixtures (Dataset 2) converge in 5-9 iterations, log-likelihood ≈ −3.7. Overlapping mixtures (Dataset 3) need 8-46 iterations and saturate around LL ≈ −4.2.',
-      'Ratio of estimated to true-parameter log-likelihood drifts from 99% on the easy data down to ~90% on the tightly-clustered dataset -- quantifying how cluster overlap punishes EM.',
-      'Random projection from 2D to 1D produces 80-93% 3NN error: the JL bound does not protect you when you halve the dimension.'
-    ],
-    stack: ['Python', 'NumPy', 'scikit-learn', 'SciPy', 'matplotlib'],
-    tags: ['coursework'],
-    heuristics: [
-      'Well-separated mixtures converge in 5-9 EM iterations; overlap pushes that past 40 and sometimes fails entirely at a 16-iter cap.',
-      'Estimated log-likelihood almost always sits below the true-parameter LL -- the gap widens as components overlap.',
-      'Johnson-Lindenstrauss does not protect distances when you cut dimension in half: 2D → 1D wrecked 3NN at 80-93% error.'
-    ]
-  },
-  {
-    slug: 'ols-poly',
-    name: 'OLS & Polynomial Regression',
-    when: 'Spring 2026',
-    role: 'CS365 Foundations of Data Science · coursework',
-    status: 'done',
-    blurb:
-      'A five-task OLS study -- linear fits at three different noise variances, a deliberately mis-specified linear fit forced onto quadratic data, multiple regression on a 2D plane, and polynomial fits of degrees 1-3 against a cubic ground truth.',
-    details: [
-      'Linear OLS on cubic data (y = 1 + 2x + x³): degree-1 fit reaches R² = 0.843 (under-fit), degree-2 R² = 0.996 (clearly a better approximation but still wrong), degree-3 R² = 1.000 (perfect).',
-      'Linear fit forced through quadratic data produces an absurd intercept (−1724.38) and slope 102 yet still scores R² = 0.940 -- classic example of why R² alone is misleading; SSE is the size of a small planet (≈ 1.09 × 10⁸).',
-      'Variance sweep on noisy linear data (σ² = 1, 5, 10): R² drifts 0.9998 → 0.9984 → 0.9969, parameter standard errors widen as expected.'
-    ],
-    stack: ['Python', 'NumPy', 'statsmodels', 'matplotlib'],
-    tags: ['coursework'],
-    heuristics: [
-      'R² alone lies -- a linear fit on quadratic data hit R² 0.94 with an intercept of −1724 and SSE in the hundreds of millions.',
-      'Pair R² with SSE and parameter standard errors before trusting any fit.',
-      'Higher polynomial degree is not always better; overfitting kicks in just past the true degree of the underlying signal.'
-    ]
   },
   {
     slug: 'package-tracking',

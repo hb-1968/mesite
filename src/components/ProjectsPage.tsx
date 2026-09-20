@@ -217,22 +217,18 @@ function ProjectEntry({
         </div>
 
         <aside className="entry-viz" aria-label={`${p.name} visualization`}>
-          <ProjectAnimation slug={p.slug} />
-          {p.heuristics ? (
-            <div className="entry-heuristics">
-              <div className="entry-heuristics__label">learned heuristics</div>
-              <ul className="entry-heuristics__list">
-                {p.heuristics.map((h, i) => (
-                  <li key={i} data-scramble data-text={h} aria-label={h}>{h}</li>
-                ))}
-              </ul>
-            </div>
-          ) : p.highlight ? (
-            <div className="entry-highlight">
-              <div className="entry-highlight__label">{p.highlight.label}</div>
-              <CountingValue raw={p.highlight.value} />
-            </div>
-          ) : null}
+          {/* the pin wraps the cover AND its headline number so they travel
+              as one unit. with sticky on the .anim alone, the highlight
+              below it scrolled up and painted over the pinned canvas. */}
+          <div className="entry-viz__pin">
+            <ProjectAnimation slug={p.slug} />
+            {p.highlight ? (
+              <div className="entry-highlight">
+                <div className="entry-highlight__label">{p.highlight.label}</div>
+                <CountingValue raw={p.highlight.value} />
+              </div>
+            ) : null}
+          </div>
         </aside>
       </div>
     </li>
